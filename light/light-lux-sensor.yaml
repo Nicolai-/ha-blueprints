@@ -1,0 +1,117 @@
+blueprint:
+  name: Light Lux Sensor
+  description: This blueprint will configure can turn on/off selected light based on a lux level threshold and delay
+  domain: automation
+  author: Nicolai-
+  input:
+    lux_sensor_entity:
+      name: (Required) Lux Sensor Entity
+      description: The action sensor of the controller to use for the automation.
+      default: ""
+      selector:
+        entity:
+          filter:
+            domain: sensor
+            device_class: illuminance
+    lux_threshold_level:
+      name: (Required) Lux level threshold
+      description: Turn on lights when below and turn off lights when above.
+      default: 50.0
+      selector:
+        number:
+          min: 0.0
+          max: 100.0
+          mode: box
+          unit_of_measurement: lx
+    delay_minutes:
+      name: Delay (minutes)
+      description: The duration lux levels must be above/below the threshold before triggering the action.
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 60
+          unit_of_measurement: minutes
+    light:
+      name: (Required) Light
+      description: Light which will be controlled with this automation.
+      selector:
+        entity:
+          filter:
+            domain: light
+    on_brightness:
+      name: On brightness
+      description: Brightness % to force when turning on the light
+      default: 100
+      selector:
+        number:
+          min: 1
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+          mode: slider
+    on_color_temperature:
+      name: On Color Temperature
+      description: The colour temperature setting for the lights when they are turned ON.
+      default: 2700
+      selector:
+        number:
+          min: 2000.0
+          max: 8000.0
+          mode: slider
+          step: 100.0
+          unit_of_measurement: kelvin
+    light_transition:
+      name: Light Transition
+      description: Number that represents the time (in milliseconds) the light should take turn on or off, if the light supports it.
+      default: 250
+      selector:
+        number:
+          min: 0
+          max: 60000
+          step: 1
+          unit_of_measurement: milliseconds
+          mode: box
+# Automation schema
+variables:
+  # convert blueprint inputs into variables to be used in templates
+  lux_sensor_entity: !input lux_sensor_entity
+  light: !input light
+  on_brightness: !input on_brightness
+  on_color_temperature: !input on_color_temperature
+  light_transition: !input light_transition
+  lux_threshold_level: !input lux_threshold_level
+trigger:
+  - platform: numeric_state
+    entity_id: !input lux_sensor_entity
+    above: !input lux_threshold_level
+    for:
+      minutes: !input delay_minutes
+  - platform: numeric_state
+    entity_id: !input lux_sensor_entity
+    below: !input lux_threshold_level
+    for:
+      minutes: !input delay_minutes
+action:
+  - variables:
+      current_lux_level: "{{ states[lux_sensor_entity].state }}"
+  - choose:
+      - alias: Turn on when below threshold
+        conditions: "{{ current_lux_level < lux_threshold_level }}"
+        sequence:
+          - service: light.turn_on
+            target:
+              entity_id: !input light
+            data:
+              brightness_pct: "{{ on_brightness }}"
+              kelvin: "{{ on_color_temperature }}"
+              transition: "{{ light_transition / 1000 }}"
+  - choose:
+      - alias: Turn off when above threshold
+        conditions: "{{ current_lux_level >= lux_threshold_level }}"
+        sequence:
+          - service: light.turn_off
+            target:
+              entity_id: !input light
+            data:
+              transition: "{{ light_transition / 1000 }}"
