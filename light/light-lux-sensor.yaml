@@ -1,6 +1,9 @@
 blueprint:
   name: Light Lux Sensor
-  description: This blueprint will configure can turn on/off selected light based on a lux level threshold and delay
+  description: >
+    This blueprint will configure can turn on/off selected light based on a lux level threshold and delay
+
+    Version 1.0.0
   domain: automation
   author: Nicolai-
   input:
