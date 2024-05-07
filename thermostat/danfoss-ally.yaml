@@ -4,7 +4,7 @@ blueprint:
     This blueprint can be used to control Danfoss Ally devices with external room temperature sensor
     It's also possible to add a window sensor (optional)
 
-    Version 1.0.0
+    Version 1.0.1
   domain: automation
   input:
     danfoss_ally_devices:
@@ -29,7 +29,7 @@ blueprint:
           domain: input_datetime
     window_sensor_entity:
       name: Window Sensor Entity (optional)
-      default:
+      default: {}
       selector:
         entity:
           domain: binary_sensor
