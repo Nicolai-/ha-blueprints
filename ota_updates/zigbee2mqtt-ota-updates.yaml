@@ -1,0 +1,88 @@
+blueprint:
+  name: Zigbee2MQTT OTA Update
+  description: >
+    Check for and trigger Zigbee2MQTT OTA updates based on selected entity domains, with the ability to exclude specific entities.
+
+    Version 1.0.0
+  domain: automation
+  input:
+    included_domains:
+      name: Included Domains
+      description: Choose which entity domains should be included for OTA updates.
+      selector:
+        select:
+          mode: list
+          options:
+            - light
+            - sensor
+            - switch
+            - binary_sensor
+            - cover
+            - fan
+            - climate
+            - lock
+    exclude_entities:
+      name: Excluded Entities
+      description: Select entities that should be excluded from the OTA update process.
+      default: []
+      selector:
+        entity:
+          multiple: true
+          domain:
+            - light
+            - sensor
+            - switch
+            - binary_sensor
+            - cover
+            - fan
+            - climate
+            - lock
+
+trigger: []
+condition: []
+action:
+  - variables:
+      included_domains: !input "included_domains"
+      exclude_entities: !input "exclude_entities"
+
+      # Get all entities needing an update
+      update_entities: >
+        {% set mqtt_update_entities = states.update
+          | selectattr('entity_id', 'in', integration_entities('mqtt'))
+          | selectattr('state', 'eq', 'on')
+          | map(attribute='entity_id') | list %}
+
+        {% set included_entities = states | selectattr('entity_id', 'in', mqtt_update_entities) %}
+
+        {% set ns = namespace(excluded_update_entities=[] ) %}
+        {% for entity in exclude_entities %}
+          {% set new_entity = entity.replace(entity.split('.')[0], 'update') %}
+          {% set ns.excluded_update_entities = ns.excluded_update_entities + [new_entity] %}
+        {% endfor %}
+
+        {{ included_entities
+          | selectattr('entity_id', 'search', included_domains | join('|'))
+          | reject('in', ns.excluded_update_entities)
+          | map(attribute='entity_id')
+          | list }}
+
+  - alias: Run OTA Update on Devices with Updates one by one
+    repeat:
+      for_each: "{{ update_entities }}"
+      sequence:
+        - variables:
+            triggered_entity: "{{ repeat.item }}"
+        - service: update.install
+          target:
+            entity_id: "{{ triggered_entity }}"
+        - wait_template: "{{ is_state_attr(triggered_entity, 'in_progress', true) }}"
+          continue_on_timeout: true
+          timeout: "00:02:00"
+          alias: Wait for the update to start for the current entity, checking every 2 minutes.
+
+        - wait_template: "{{ is_state_attr(triggered_entity, 'in_progress', false) }}"
+          continue_on_timeout: true
+          timeout: "02:00:00"
+          alias: Wait for the update to complete for the current entity, allowing up to 2 hours.
+
+mode: single
