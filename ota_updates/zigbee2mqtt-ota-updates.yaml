@@ -45,6 +45,15 @@ action:
       included_domains: !input "included_domains"
       exclude_entities: !input "exclude_entities"
 
+      excluded_update_entities: >
+        {% set update_entities = [] %}
+        {% for entity in exclude_entities %}
+          {% set domain, name = entity.split('.') %}
+          {% set new_entity = 'update.' + name %}
+          {% set update_entities = update_entities + [new_entity] %}
+        {% endfor %}
+        {{ update_entities }}
+
       # Get all entities needing an update
       update_entities: >
         {% set mqtt_update_entities = states.update
@@ -54,15 +63,9 @@ action:
 
         {% set included_entities = states | selectattr('entity_id', 'in', mqtt_update_entities) %}
 
-        {% set ns = namespace(excluded_update_entities=[] ) %}
-        {% for entity in exclude_entities %}
-          {% set new_entity = entity.replace(entity.split('.')[0], 'update') %}
-          {% set ns.excluded_update_entities = ns.excluded_update_entities + [new_entity] %}
-        {% endfor %}
-
         {{ included_entities
           | selectattr('entity_id', 'search', included_domains | join('|'))
-          | reject('in', ns.excluded_update_entities)
+          | reject('in', excluded_update_entities)
           | map(attribute='entity_id')
           | list }}
 
