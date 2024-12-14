@@ -1,10 +1,6 @@
 blueprint:
   name: Danfoss Ally Controller
-  description: >
-    This blueprint can be used to control Danfoss Ally devices with external room temperature sensor
-    It's also possible to add a window sensor (optional)
-
-    Version 1.0.1
+  description: 'This blueprint can be used to control Danfoss Ally devices with external room temperature sensors. Supports multiple window sensors (optional).'
   domain: automation
   input:
     danfoss_ally_devices:
@@ -12,7 +8,9 @@ blueprint:
       description: Select all Danfoss Ally TRVs located in the same room
       selector:
         device:
-          manufacturer: Danfoss
+          filter:
+            integration: mqtt
+            manufacturer: Danfoss
           entity:
             domain: climate
           multiple: true
@@ -20,78 +18,51 @@ blueprint:
       name: Temperature Sensor Entity
       selector:
         entity:
-          domain: sensor
-          device_class: temperature
+          multiple: false
+          filter:
+            domain: sensor
+            device_class: temperature
     earliest_update_time:
       name: Earliest Next Update Time
       selector:
         entity:
-          domain: input_datetime
-    window_sensor_entity:
-      name: Window Sensor Entity (optional)
-      default: {}
+          multiple: false
+          filter:
+            domain: input_datetime
+    window_sensor_entities:
+      name: Window Sensor Entities (optional)
+      description: Select one or more window sensors
+      default: []
       selector:
         entity:
-          domain: binary_sensor
-          device_class: window
-
-trigger_variables:
-  window_sensor_entity: !input "window_sensor_entity"
-
-trigger:
-  - platform: state
-    entity_id: !input "temperature_sensor_entity"
+          multiple: true
+          filter:
+            domain: binary_sensor
+            device_class: [window, door, garage_door]
+  source_url: https://github.com/Nicolai-/ha-blueprints/blob/main/thermostat/danfoss-ally.yaml
+triggers:
+  - trigger: state
+    entity_id: !input temperature_sensor_entity
     id: temperature
-  - platform: template
-    value_template: >
-      {% if window_sensor_entity %}
-        {{ is_state(window_sensor_entity, "on") }}
-      {% else %}
-        false
-      {% endif %}
-    id: window_open
-  - platform: template
-    value_template: >
-      {% if window_sensor_entity %}
-        {{ is_state(window_sensor_entity, "off") }}
-      {% else %}
-        false
-      {% endif %}
-    id: window_closed
-  - platform: time
-    at: !input "earliest_update_time"
+  - trigger: state
+    entity_id: !input window_sensor_entities
+    id: window_sensors
+  - trigger: time
+    at: !input earliest_update_time
     id: time
-  - platform: time_pattern
+  - trigger: time_pattern
     minutes: /30
     id: backup
-
 variables:
-  danfoss_ally_devices: !input "danfoss_ally_devices"
-  all_danfoss_entities: >
-    {{
-      danfoss_ally_devices
-      |map('device_entities')
-      |sum(start=[])
-    }}
-  danfoss_ally_external_measured_room_sensor_entities: >
-    {{
-      all_danfoss_entities
-      |select('match', 'number.*_external_measured_room_sensor$')
-      |list
-    }}
-  danfoss_ally_window_open_external_entities: >
-    {{
-      all_danfoss_entities
-      |select('match', 'switch.*_window_open_external')
-      |list
-    }}
-  temperature_sensor_entity: !input "temperature_sensor_entity"
-  window_sensor_entity: !input "window_sensor_entity"
-  earliest_update_time: !input "earliest_update_time"
-  external_measured_room_sensor_read_entity: "{{ danfoss_ally_external_measured_room_sensor_entities | first }}"
-  window_open_external_read_entity: "{{ danfoss_ally_window_open_external_entities | first }}"
-
-condition:
+  danfoss_ally_devices: !input danfoss_ally_devices
+  all_danfoss_entities: "{{ danfoss_ally_devices | map('device_entities') | sum(start=[]) }}"
+  danfoss_ally_external_measured_room_sensor_entities: "{{ all_danfoss_entities | select('match', 'number.*_external_measured_room_sensor$') | list }}"
+  danfoss_ally_window_open_external_entities: "{{ all_danfoss_entities | select('match', 'switch.*_window_open_external') | list }}"
+  temperature_sensor_entity: !input temperature_sensor_entity
+  window_sensor_entities: !input window_sensor_entities
+  earliest_update_time: !input earliest_update_time
+  external_measured_room_sensor_read_entity: '{{ danfoss_ally_external_measured_room_sensor_entities | first }}'
+conditions:
   - condition: or
     enabled: false
     conditions:
@@ -99,57 +70,41 @@ condition:
         id:
           - time
       - condition: template
-        value_template: >-
-          {{ (states(external_measured_room_sensor_read_entity) | int
-          - (states(temperature_sensor_entity) | float * 100) |
-          round) | abs >= 10 }}
+        value_template: '{{ (states(external_measured_room_sensor_read_entity) | int - (states(temperature_sensor_entity) | float * 100) | round) | abs >= 10 }}'
       - condition: template
-        value_template: >-
-          {{ now() > states(earliest_update_time) | as_datetime | as_local }}
-
+        value_template: '{{ now() > states(earliest_update_time) | as_datetime | as_local }}'
 action:
   - if:
       - condition: or
         conditions:
           - alias: If temperature has changed at least 0.1K
             condition: template
-            value_template: >-
-              {{ (states(external_measured_room_sensor_read_entity) | int
-              - (states(temperature_sensor_entity) | float * 100) |
-              round) | abs >= 10 }}
+            value_template: '{{ (states(external_measured_room_sensor_read_entity) | int - (states(temperature_sensor_entity) | float * 100) | round) | abs >= 10 }}'
           - alias: If we've not updated within the last 30 minutes
             condition: template
-            value_template: >-
-              {{ now() > states(earliest_update_time) | as_datetime | as_local }}
+            value_template: '{{ now() > states(earliest_update_time) | as_datetime | as_local }}'
     then:
-      - service: number.set_value
+      - action: number.set_value
         target:
-          entity_id: "{{ danfoss_ally_external_measured_room_sensor_entities }}"
+          entity_id: '{{ danfoss_ally_external_measured_room_sensor_entities }}'
         data:
-          value: "{{ (states(temperature_sensor_entity) | float * 100) | round }}"
-      - service: input_datetime.set_datetime
+          value: '{{ (states(temperature_sensor_entity) | float * 100) | round }}'
+      - action: input_datetime.set_datetime
         target:
-          entity_id: !input "earliest_update_time"
+          entity_id: !input earliest_update_time
         data:
-          datetime: "{{ (now() + timedelta(minutes=30)).strftime('%Y-%m-%d %H:%M:%S') }}"
+          datetime: '{{ (now() + timedelta(minutes=30)).strftime(''%Y-%m-%d %H:%M:%S'') }}'
   - choose:
-      - alias: If window sensor were given
-        conditions: "{{ window_sensor_entity | length > 0 }}"
+      - alias: If any window sensor is open
+        conditions: '{{ window_sensor_entities | select(''is_state'', ''on'') | list | length > 0 }}'
         sequence:
-          - choose:
-              - alias: Update window open status
-                conditions: "{{ states(window_sensor_entity) != states(window_open_external_read_entity) }}"
-                sequence:
-                  - choose:
-                      - alias: Window open
-                        conditions: '{{ states(window_sensor_entity) == "on" }}'
-                        sequence:
-                          - service: switch.turn_on
-                            target:
-                              entity_id: "{{ danfoss_ally_window_open_external_entities }}"
-                    default:
-                      - alias: Window closed
-                        service: switch.turn_off
-                        target:
-                          entity_id: "{{ danfoss_ally_window_open_external_entities }}"
+          - action: switch.turn_on
+            target:
+              entity_id: '{{ danfoss_ally_window_open_external_entities }}'
+      - alias: If all window sensors are closed
+        conditions: '{{ window_sensor_entities | select(''is_state'', ''on'') | list | length == 0 }}'
+        sequence:
+          - action: switch.turn_off
+            target:
+              entity_id: '{{ danfoss_ally_window_open_external_entities }}'
 mode: single
