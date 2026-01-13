@@ -1,9 +1,9 @@
 blueprint:
   name: Light Lux Sensor
   description: >
-    This blueprint will configure can turn on/off selected light based on a lux level threshold and delay
+    This blueprint will turn on/off selected light based on a lux level threshold and delay.
 
-    Version 1.0.0
+    Version 1.0.1
   domain: automation
   author: Nicolai-
   input:
@@ -75,7 +75,7 @@ blueprint:
           step: 1
           unit_of_measurement: milliseconds
           mode: box
-# Automation schema
+  source_url: https://github.com/Nicolai-/ha-blueprints/blob/main/light/light-lux-sensor.yaml
 variables:
   # convert blueprint inputs into variables to be used in templates
   lux_sensor_entity: !input lux_sensor_entity
@@ -84,37 +84,39 @@ variables:
   on_color_temperature: !input on_color_temperature
   light_transition: !input light_transition
   lux_threshold_level: !input lux_threshold_level
-trigger:
-  - platform: numeric_state
+triggers:
+  - trigger: numeric_state
     entity_id: !input lux_sensor_entity
     above: !input lux_threshold_level
     for:
       minutes: !input delay_minutes
-  - platform: numeric_state
+  - trigger: numeric_state
     entity_id: !input lux_sensor_entity
     below: !input lux_threshold_level
     for:
       minutes: !input delay_minutes
+  - trigger: time_pattern
+    minutes: /10
 action:
   - variables:
-      current_lux_level: "{{ states[lux_sensor_entity].state }}"
+      current_lux_level: "{{ states(lux_sensor_entity) | float(0) }}"
   - choose:
       - alias: Turn on when below threshold
-        conditions: "{{ current_lux_level < lux_threshold_level }}"
+        conditions: "{{ current_lux_level < lux_threshold_level | float }}"
         sequence:
-          - service: light.turn_on
+          - action: light.turn_on
             target:
               entity_id: !input light
             data:
               brightness_pct: "{{ on_brightness }}"
               kelvin: "{{ on_color_temperature }}"
               transition: "{{ light_transition / 1000 }}"
-  - choose:
+    default:
       - alias: Turn off when above threshold
-        conditions: "{{ current_lux_level >= lux_threshold_level }}"
-        sequence:
-          - service: light.turn_off
-            target:
-              entity_id: !input light
-            data:
-              transition: "{{ light_transition / 1000 }}"
+        action: light.turn_off
+        target:
+          entity_id: !input light
+        data:
+          transition: "{{ light_transition / 1000 }}"
+
+mode: single
