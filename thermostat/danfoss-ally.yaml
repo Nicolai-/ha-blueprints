@@ -1,6 +1,19 @@
 blueprint:
   name: Danfoss Ally Controller
-  description: 'This blueprint can be used to control Danfoss Ally devices with external room temperature sensors. Supports multiple window sensors (optional).'
+  description: >
+    Control Danfoss Ally TRVs with external room temperature sensors.
+    Supports multiple window sensors (optional) and room load balancing
+    for multiple TRVs in the same room.
+
+
+    **Version:** 1.1.0
+
+
+    **Changelog:**
+
+    - 1.1.0: Added room load balancing for multiple TRVs (calculates and sets load_room_mean every 15 minutes)
+
+    - 1.0.0: Initial release with external temperature sensor and window sensor support
   domain: automation
   homeassistant:
     min_version: "2024.10.0"
@@ -55,11 +68,26 @@ triggers:
   - trigger: time_pattern
     minutes: /30
     id: backup
+  - trigger: time_pattern
+    minutes: /15
+    id: load_balance
 variables:
   danfoss_ally_devices: !input danfoss_ally_devices
   all_danfoss_entities: "{{ danfoss_ally_devices | map('device_entities') | sum(start=[]) }}"
   danfoss_ally_external_measured_room_sensor_entities: "{{ all_danfoss_entities | select('match', 'number.*_external_measured_room_sensor$') | list }}"
   danfoss_ally_window_open_external_entities: "{{ all_danfoss_entities | select('match', 'switch.*_window_open_external') | list }}"
+  danfoss_ally_load_room_mean_entities: "{{ all_danfoss_entities | select('match', 'number.*_load_room_mean$') | list }}"
+  danfoss_ally_load_balancing_enable_entities: "{{ all_danfoss_entities | select('match', 'switch.*_load_balancing_enable$') | list }}"
+  room_load_mean: >
+    {% set load_estimate_entities = all_danfoss_entities | select('match', 'sensor.*_load_estimate$') | list %}
+    {% set valid_states = expand(load_estimate_entities)
+      | selectattr('last_changed', 'ge', now() - timedelta(minutes=90))
+      | map(attribute='state') | map('int', -8000) | select('ge', -500) | list %}
+    {% if valid_states | count == 0 %}
+    Unknown
+    {% else %}
+    {{ (valid_states | sum / valid_states | count) | round }}
+    {% endif %}
   temperature_sensor_entity: !input temperature_sensor_entity
   window_sensor_entities: !input window_sensor_entities
   earliest_update_time: !input earliest_update_time
@@ -76,37 +104,76 @@ conditions:
       - condition: template
         value_template: '{{ now() > states(earliest_update_time) | as_datetime | as_local }}'
 actions:
-  - if:
-      - condition: or
-        conditions:
-          - alias: If temperature has changed at least 0.1K
-            condition: template
-            value_template: '{{ (states(external_measured_room_sensor_read_entity) | int - (states(temperature_sensor_entity) | float * 100) | round) | abs >= 10 }}'
-          - alias: If we've not updated within the last 30 minutes
-            condition: template
-            value_template: '{{ now() > states(earliest_update_time) | as_datetime | as_local }}'
-    then:
-      - action: number.set_value
-        target:
-          entity_id: '{{ danfoss_ally_external_measured_room_sensor_entities }}'
-        data:
-          value: '{{ (states(temperature_sensor_entity) | float * 100) | round }}'
-      - action: input_datetime.set_datetime
-        target:
-          entity_id: !input earliest_update_time
-        data:
-          datetime: '{{ (now() + timedelta(minutes=30)).strftime(''%Y-%m-%d %H:%M:%S'') }}'
   - choose:
-      - alias: If any window sensor is open
-        conditions: '{{ window_sensor_entities | select(''is_state'', ''on'') | list | length > 0 }}'
+      - alias: Room load balancing (every 15 min) - Multiple TRVs
+        conditions:
+          - condition: trigger
+            id: load_balance
+          - condition: template
+            value_template: "{{ room_load_mean | trim != 'Unknown' }}"
+          - condition: template
+            value_template: "{{ danfoss_ally_devices | count > 1 }}"
         sequence:
-          - action: switch.turn_on
+          - alias: Enable load balancing on all TRVs
+            action: switch.turn_on
             target:
-              entity_id: '{{ danfoss_ally_window_open_external_entities }}'
-      - alias: If all window sensors are closed
-        conditions: '{{ window_sensor_entities | select(''is_state'', ''on'') | list | length == 0 }}'
+              entity_id: '{{ danfoss_ally_load_balancing_enable_entities }}'
+          - alias: Set room load mean on all TRVs
+            action: number.set_value
+            target:
+              entity_id: '{{ danfoss_ally_load_room_mean_entities }}'
+            data:
+              value: '{{ room_load_mean }}'
+      - alias: Disable load balancing (single TRV)
+        conditions:
+          - condition: trigger
+            id: load_balance
+          - condition: template
+            value_template: "{{ danfoss_ally_devices | count == 1 }}"
         sequence:
-          - action: switch.turn_off
+          - alias: Disable load balancing on single TRV
+            action: switch.turn_off
             target:
-              entity_id: '{{ danfoss_ally_window_open_external_entities }}'
+              entity_id: '{{ danfoss_ally_load_balancing_enable_entities }}'
+  - if:
+      - condition: trigger
+        id:
+          - temperature
+          - window_sensors
+          - time
+          - backup
+    then:
+      - if:
+          - condition: or
+            conditions:
+              - alias: If temperature has changed at least 0.1K
+                condition: template
+                value_template: '{{ (states(external_measured_room_sensor_read_entity) | int - (states(temperature_sensor_entity) | float * 100) | round) | abs >= 10 }}'
+              - alias: If we've not updated within the last 30 minutes
+                condition: template
+                value_template: '{{ now() > states(earliest_update_time) | as_datetime | as_local }}'
+        then:
+          - action: number.set_value
+            target:
+              entity_id: '{{ danfoss_ally_external_measured_room_sensor_entities }}'
+            data:
+              value: '{{ (states(temperature_sensor_entity) | float * 100) | round }}'
+          - action: input_datetime.set_datetime
+            target:
+              entity_id: !input earliest_update_time
+            data:
+              datetime: '{{ (now() + timedelta(minutes=30)).strftime(''%Y-%m-%d %H:%M:%S'') }}'
+      - choose:
+          - alias: If any window sensor is open
+            conditions: '{{ window_sensor_entities | select(''is_state'', ''on'') | list | length > 0 }}'
+            sequence:
+              - action: switch.turn_on
+                target:
+                  entity_id: '{{ danfoss_ally_window_open_external_entities }}'
+          - alias: If all window sensors are closed
+            conditions: '{{ window_sensor_entities | select(''is_state'', ''on'') | list | length == 0 }}'
+            sequence:
+              - action: switch.turn_off
+                target:
+                  entity_id: '{{ danfoss_ally_window_open_external_entities }}'
 mode: single
