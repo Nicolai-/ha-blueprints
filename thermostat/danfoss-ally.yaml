@@ -2,6 +2,8 @@ blueprint:
   name: Danfoss Ally Controller
   description: 'This blueprint can be used to control Danfoss Ally devices with external room temperature sensors. Supports multiple window sensors (optional).'
   domain: automation
+  homeassistant:
+    min_version: "2024.10.0"
   input:
     danfoss_ally_devices:
       name: Danfoss Ally Device(s)
@@ -73,7 +75,7 @@ conditions:
         value_template: '{{ (states(external_measured_room_sensor_read_entity) | int - (states(temperature_sensor_entity) | float * 100) | round) | abs >= 10 }}'
       - condition: template
         value_template: '{{ now() > states(earliest_update_time) | as_datetime | as_local }}'
-action:
+actions:
   - if:
       - condition: or
         conditions:
