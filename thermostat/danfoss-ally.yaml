@@ -6,10 +6,12 @@ blueprint:
     for multiple TRVs in the same room.
 
 
-    **Version:** 1.1.0
+    **Version:** 1.1.1
 
 
     **Changelog:**
+
+    - 1.1.1: Added configurable Algorithm Scale Factor setting
 
     - 1.1.0: Added room load balancing for multiple TRVs (calculates and sets load_room_mean every 15 minutes)
 
@@ -54,6 +56,28 @@ blueprint:
           filter:
             domain: binary_sensor
             device_class: [window, door, garage_door]
+    algorithm_scale_factor:
+      name: Algorithm Scale Factor
+      description: >
+        Controls how aggressively the TRV responds to temperature differences.
+        Lower values = faster response, higher values = smoother/slower response.
+
+        - **1-2**: Quick (~5 min) - Fast reaction, may cause overshoot
+
+        - **3-4**: Fast (~15 min) - Responsive, good for well-insulated rooms
+
+        - **5-6**: Moderate (~30 min) - Balanced response (recommended)
+
+        - **7-8**: Slow (~50 min) - Smooth, reduces overshoot
+
+        - **9-10**: Very slow (~80 min) - Gradual changes, best for underfloor heating
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 10
+          step: 1
+          mode: slider
   source_url: https://github.com/Nicolai-/ha-blueprints/blob/main/thermostat/danfoss-ally.yaml
 triggers:
   - trigger: state
@@ -78,6 +102,8 @@ variables:
   danfoss_ally_window_open_external_entities: "{{ all_danfoss_entities | select('match', 'switch.*_window_open_external') | list }}"
   danfoss_ally_load_room_mean_entities: "{{ all_danfoss_entities | select('match', 'number.*_load_room_mean$') | list }}"
   danfoss_ally_load_balancing_enable_entities: "{{ all_danfoss_entities | select('match', 'switch.*_load_balancing_enable$') | list }}"
+  danfoss_ally_algorithm_scale_factor_entities: "{{ all_danfoss_entities | select('match', 'number.*_algorithm_scale_factor$') | list }}"
+  algorithm_scale_factor: !input algorithm_scale_factor
   room_load_mean: >
     {% set load_estimate_entities = all_danfoss_entities | select('match', 'sensor.*_load_estimate$') | list %}
     {% set valid_states = expand(load_estimate_entities)
@@ -124,6 +150,12 @@ actions:
               entity_id: '{{ danfoss_ally_load_room_mean_entities }}'
             data:
               value: '{{ room_load_mean }}'
+          - alias: Set algorithm scale factor on all TRVs
+            action: number.set_value
+            target:
+              entity_id: '{{ danfoss_ally_algorithm_scale_factor_entities }}'
+            data:
+              value: '{{ algorithm_scale_factor }}'
       - alias: Disable load balancing (single TRV)
         conditions:
           - condition: trigger
@@ -135,6 +167,12 @@ actions:
             action: switch.turn_off
             target:
               entity_id: '{{ danfoss_ally_load_balancing_enable_entities }}'
+          - alias: Set algorithm scale factor on all TRVs
+            action: number.set_value
+            target:
+              entity_id: '{{ danfoss_ally_algorithm_scale_factor_entities }}'
+            data:
+              value: '{{ algorithm_scale_factor }}'
   - if:
       - condition: trigger
         id:
