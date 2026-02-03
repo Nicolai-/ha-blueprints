@@ -1,18 +1,19 @@
 blueprint:
   name: Light Lux Sensor
-  description: 'This blueprint will turn on/off selected light based on a lux level
+  description:
+    "This blueprint will turn on/off selected light based on a lux level
     threshold and delay.
 
     Version 1.0.1
 
-    '
+    "
   domain: automation
   author: Nicolai-
   input:
     lux_sensor_entity:
       name: (Required) Lux Sensor Entity
       description: The action sensor of the controller to use for the automation.
-      default: ''
+      default: ""
       selector:
         entity:
           filter:
@@ -64,7 +65,7 @@ blueprint:
           min: 1.0
           max: 100.0
           step: 1.0
-          unit_of_measurement: '%'
+          unit_of_measurement: "%"
           mode: slider
     on_color_temperature:
       name: On Color Temperature
@@ -113,23 +114,23 @@ triggers:
   minutes: /10
 action:
 - variables:
-    current_lux_level: '{{ states(lux_sensor_entity) | float(0) }}'
+      current_lux_level: "{{ states(lux_sensor_entity) | float(0) }}"
 - choose:
   - alias: Turn on when below threshold
-    conditions: '{{ current_lux_level < lux_threshold_level | float }}'
+        conditions: "{{ current_lux_level < lux_threshold_level | float }}"
     sequence:
     - action: light.turn_on
       target:
         entity_id: !input light
       data:
-        brightness_pct: '{{ on_brightness }}'
-        color_temp_kelvin: '{{ on_color_temperature }}'
-        transition: '{{ light_transition / 1000 }}'
+        brightness_pct: "{{ on_brightness }}"
+        color_temp_kelvin: "{{ on_color_temperature }}"
+        transition: "{{ light_transition / 1000 }}"
   default:
   - alias: Turn off when above threshold
     action: light.turn_off
     target:
       entity_id: !input light
     data:
-      transition: '{{ light_transition / 1000 }}'
+        transition: "{{ light_transition / 1000 }}"
 mode: single
