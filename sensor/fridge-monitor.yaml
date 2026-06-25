@@ -1,0 +1,291 @@
+blueprint:
+  name: Fridge Monitor
+  description: >
+    Monitor a fridge door sensor and temperature sensor.
+
+    Sends repeated TTS alerts while the fridge door remains open, sends
+    configurable notification actions when the door has been open too long,
+    and alerts when the temperature remains below the configured threshold.
+
+    **Version:** 1.0.0
+
+    **Changelog:**
+
+    - 1.0.0: Initial release with door and temperature monitoring
+  domain: automation
+  homeassistant:
+    min_version: "2024.10.0"
+  author: Nicolai-
+  input:
+    door_sensor_entity:
+      name: (Required) Fridge Door Sensor
+      description: Binary sensor that is on/open when the fridge door is open.
+      selector:
+        entity:
+          multiple: false
+          filter:
+            domain: binary_sensor
+            device_class:
+              - door
+              - window
+              - opening
+    temperature_sensor_entity:
+      name: (Required) Fridge Temperature Sensor
+      description: Temperature sensor inside the fridge or freezer.
+      selector:
+        entity:
+          multiple: false
+          filter:
+            domain: sensor
+            device_class: temperature
+    tts_engine_entity:
+      name: (Required) TTS Engine
+      description: Text-to-speech entity used by the tts.speak action.
+      selector:
+        entity:
+          multiple: false
+          filter:
+            domain: tts
+    speaker_entity:
+      name: (Required) Speaker
+      description: Media player that should announce the TTS warnings.
+      selector:
+        entity:
+          multiple: false
+          filter:
+            domain: media_player
+    door_tts_delay:
+      name: Door TTS Delay
+      description: Minutes the door must remain open before repeated TTS warnings start.
+      default: 5
+      selector:
+        number:
+          min: 0.5
+          max: 60
+          step: 0.5
+          unit_of_measurement: minutes
+          mode: slider
+    door_notification_delay:
+      name: Door Notification Delay
+      description: >
+        Minutes the door must remain open before notification actions run.
+        Keep this equal to or higher than the Door TTS Delay.
+      default: 10
+      selector:
+        number:
+          min: 0.5
+          max: 120
+          step: 0.5
+          unit_of_measurement: minutes
+          mode: slider
+    temperature_threshold:
+      name: Temperature Threshold
+      description: Temperature threshold that triggers alerts when the sensor stays below it.
+      default: -10
+      selector:
+        number:
+          min: -40
+          max: 20
+          step: 0.5
+          unit_of_measurement: °C
+          mode: slider
+    temperature_duration:
+      name: Temperature Duration
+      description: Minutes the temperature must remain below the threshold before alerting.
+      default: 10
+      selector:
+        number:
+          min: 0.5
+          max: 120
+          step: 0.5
+          unit_of_measurement: minutes
+          mode: slider
+    tts_repeat_interval:
+      name: TTS Repeat Interval
+      description: Minutes between repeated TTS announcements while the alert remains active.
+      default: 1
+      selector:
+        number:
+          min: 0.5
+          max: 30
+          step: 0.5
+          unit_of_measurement: minutes
+          mode: slider
+    door_tts_message:
+      name: Door TTS Message
+      description: Message spoken while the fridge door remains open.
+      default: 'The fridge door is still open. Please close it.'
+      selector:
+        text:
+          multiline: false
+          type: text
+    temperature_tts_message:
+      name: Temperature TTS Message
+      description: Message spoken while the fridge temperature alert remains active.
+      default: 'The fridge temperature needs attention.'
+      selector:
+        text:
+          multiline: false
+          type: text
+    notification_actions:
+      name: Notification Actions
+      description: >
+        Optional actions to run for door and temperature notifications. Add a
+        mobile notification, notify.smtp email action, persistent notification,
+        or any other Home Assistant action. Templates can use alert_title,
+        alert_message, alert_entity, current_temperature, and
+        temperature_threshold.
+      default: []
+      selector:
+        action: {}
+  source_url: https://github.com/Nicolai-/ha-blueprints/blob/main/sensor/fridge-monitor.yaml
+
+triggers:
+  - trigger: state
+    entity_id: !input door_sensor_entity
+    to: 'on'
+    for:
+      minutes: !input door_tts_delay
+    id: door_tts
+  - trigger: state
+    entity_id: !input door_sensor_entity
+    to: 'on'
+    for:
+      minutes: !input door_notification_delay
+    id: door_notification
+  - trigger: state
+    entity_id: !input door_sensor_entity
+    to: 'off'
+    id: door_closed
+  - trigger: numeric_state
+    entity_id: !input temperature_sensor_entity
+    below: !input temperature_threshold
+    for:
+      minutes: !input temperature_duration
+    id: temperature_alert
+  - trigger: numeric_state
+    entity_id: !input temperature_sensor_entity
+    above: !input temperature_threshold
+    id: temperature_recovered
+
+variables:
+  door_sensor_entity: !input door_sensor_entity
+  temperature_sensor_entity: !input temperature_sensor_entity
+  tts_engine_entity: !input tts_engine_entity
+  speaker_entity: !input speaker_entity
+  door_tts_message: !input door_tts_message
+  temperature_tts_message: !input temperature_tts_message
+  notification_actions: !input notification_actions
+  temperature_threshold: !input temperature_threshold
+  current_temperature: "{{ states(temperature_sensor_entity) }}"
+  notification_actions_configured: "{{ notification_actions | count > 0 }}"
+
+actions:
+  - choose:
+      - alias: Door has been open long enough to notify
+        conditions:
+          - condition: trigger
+            id: door_notification
+        sequence:
+          - variables:
+              alert_title: 'Fridge Door Open'
+              alert_message: 'The fridge door has been open for too long.'
+              alert_entity: "{{ door_sensor_entity }}"
+          - action: logbook.log
+            data:
+              name: 'Fridge Monitor'
+              message: "{{ alert_message }}"
+              entity_id: "{{ alert_entity }}"
+          - choose:
+              - conditions: "{{ notification_actions_configured }}"
+                sequence: !input notification_actions
+          - repeat:
+              while:
+                - condition: state
+                  entity_id: !input door_sensor_entity
+                  state: 'on'
+              sequence:
+                - action: tts.speak
+                  target:
+                    entity_id: !input tts_engine_entity
+                  data:
+                    media_player_entity_id: !input speaker_entity
+                    message: "{{ door_tts_message }}"
+                    cache: true
+                - delay:
+                    minutes: !input tts_repeat_interval
+      - alias: Door has been open long enough for TTS
+        conditions:
+          - condition: trigger
+            id: door_tts
+        sequence:
+          - variables:
+              alert_title: 'Fridge Door Open'
+              alert_message: 'The fridge door is open.'
+              alert_entity: "{{ door_sensor_entity }}"
+          - action: logbook.log
+            data:
+              name: 'Fridge Monitor'
+              message: "{{ alert_message }}"
+              entity_id: "{{ alert_entity }}"
+          - repeat:
+              while:
+                - condition: state
+                  entity_id: !input door_sensor_entity
+                  state: 'on'
+              sequence:
+                - action: tts.speak
+                  target:
+                    entity_id: !input tts_engine_entity
+                  data:
+                    media_player_entity_id: !input speaker_entity
+                    message: "{{ door_tts_message }}"
+                    cache: true
+                - delay:
+                    minutes: !input tts_repeat_interval
+      - alias: Temperature has stayed below threshold
+        conditions:
+          - condition: trigger
+            id: temperature_alert
+        sequence:
+          - variables:
+              alert_title: 'Fridge Temperature Alert'
+              alert_message: "The fridge temperature has stayed below {{ temperature_threshold }}°C."
+              alert_entity: "{{ temperature_sensor_entity }}"
+          - action: logbook.log
+            data:
+              name: 'Fridge Monitor'
+              message: "{{ alert_message }}"
+              entity_id: "{{ alert_entity }}"
+          - choose:
+              - conditions: "{{ notification_actions_configured }}"
+                sequence: !input notification_actions
+          - repeat:
+              while:
+                - condition: numeric_state
+                  entity_id: !input temperature_sensor_entity
+                  below: !input temperature_threshold
+              sequence:
+                - action: tts.speak
+                  target:
+                    entity_id: !input tts_engine_entity
+                  data:
+                    media_player_entity_id: !input speaker_entity
+                    message: "{{ temperature_tts_message }}"
+                    cache: true
+                - delay:
+                    minutes: !input tts_repeat_interval
+      - alias: Door closed or temperature recovered
+        conditions:
+          - condition: trigger
+            id:
+              - door_closed
+              - temperature_recovered
+        sequence:
+          - action: logbook.log
+            data:
+              name: 'Fridge Monitor'
+              message: 'Fridge monitor alert cleared.'
+              entity_id: "{{ trigger.entity_id }}"
+
+mode: restart
