@@ -7,9 +7,11 @@ blueprint:
     configurable notification actions when the door has been open too long,
     and alerts when the temperature remains below the configured threshold.
 
-    **Version:** 1.0.0
+    **Version:** 1.0.1
 
     **Changelog:**
+
+    - 1.0.1: Changed TTS repeat interval from minutes to seconds
 
     - 1.0.0: Initial release with door and temperature monitoring
   domain: automation
@@ -102,14 +104,14 @@ blueprint:
           mode: slider
     tts_repeat_interval:
       name: TTS Repeat Interval
-      description: Minutes between repeated TTS announcements while the alert remains active.
-      default: 1
+      description: Seconds between repeated TTS announcements while the alert remains active.
+      default: 60
       selector:
         number:
-          min: 0.5
-          max: 30
-          step: 0.5
-          unit_of_measurement: minutes
+          min: 5
+          max: 1800
+          step: 5
+          unit_of_measurement: seconds
           mode: slider
     door_tts_message:
       name: Door TTS Message
@@ -213,7 +215,7 @@ actions:
                     message: "{{ door_tts_message }}"
                     cache: true
                 - delay:
-                    minutes: !input tts_repeat_interval
+                    seconds: !input tts_repeat_interval
       - alias: Door has been open long enough for TTS
         conditions:
           - condition: trigger
@@ -242,7 +244,7 @@ actions:
                     message: "{{ door_tts_message }}"
                     cache: true
                 - delay:
-                    minutes: !input tts_repeat_interval
+                    seconds: !input tts_repeat_interval
       - alias: Temperature has stayed below threshold
         conditions:
           - condition: trigger
@@ -274,7 +276,7 @@ actions:
                     message: "{{ temperature_tts_message }}"
                     cache: true
                 - delay:
-                    minutes: !input tts_repeat_interval
+                    seconds: !input tts_repeat_interval
       - alias: Door closed or temperature recovered
         conditions:
           - condition: trigger
