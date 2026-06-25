@@ -7,9 +7,11 @@ blueprint:
     configurable notification actions when the door has been open too long,
     and alerts when the temperature remains below the configured threshold.
 
-    **Version:** 1.0.1
+    **Version:** 1.1.0
 
     **Changelog:**
+
+    - 1.1.0: Added configurable TTS volume with volume restore after messages
 
     - 1.0.1: Changed TTS repeat interval from minutes to seconds
 
@@ -113,6 +115,28 @@ blueprint:
           step: 5
           unit_of_measurement: seconds
           mode: slider
+    tts_volume_level:
+      name: TTS Volume Level
+      description: Speaker volume used for fridge alert messages.
+      default: 70
+      selector:
+        number:
+          min: 1
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+          mode: slider
+    tts_volume_restore_delay:
+      name: TTS Volume Restore Delay
+      description: Seconds to wait after starting TTS before restoring the previous speaker volume.
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 120
+          step: 1
+          unit_of_measurement: seconds
+          mode: slider
     door_tts_message:
       name: Door TTS Message
       description: Message spoken while the fridge door remains open.
@@ -177,6 +201,8 @@ variables:
   speaker_entity: !input speaker_entity
   door_tts_message: !input door_tts_message
   temperature_tts_message: !input temperature_tts_message
+  tts_volume_level: !input tts_volume_level
+  tts_volume_level_normalized: "{{ (tts_volume_level | float(70) / 100) | round(2) }}"
   notification_actions: !input notification_actions
   temperature_threshold: !input temperature_threshold
   current_temperature: "{{ states(temperature_sensor_entity) }}"
@@ -207,6 +233,13 @@ actions:
                   entity_id: !input door_sensor_entity
                   state: 'on'
               sequence:
+                - variables:
+                    previous_volume_level: "{{ state_attr(speaker_entity, 'volume_level') }}"
+                - action: media_player.volume_set
+                  target:
+                    entity_id: !input speaker_entity
+                  data:
+                    volume_level: "{{ tts_volume_level_normalized }}"
                 - action: tts.speak
                   target:
                     entity_id: !input tts_engine_entity
@@ -214,6 +247,16 @@ actions:
                     media_player_entity_id: !input speaker_entity
                     message: "{{ door_tts_message }}"
                     cache: true
+                - delay:
+                    seconds: !input tts_volume_restore_delay
+                - choose:
+                    - conditions: "{{ previous_volume_level != none }}"
+                      sequence:
+                        - action: media_player.volume_set
+                          target:
+                            entity_id: !input speaker_entity
+                          data:
+                            volume_level: "{{ previous_volume_level }}"
                 - delay:
                     seconds: !input tts_repeat_interval
       - alias: Door has been open long enough for TTS
@@ -236,6 +279,13 @@ actions:
                   entity_id: !input door_sensor_entity
                   state: 'on'
               sequence:
+                - variables:
+                    previous_volume_level: "{{ state_attr(speaker_entity, 'volume_level') }}"
+                - action: media_player.volume_set
+                  target:
+                    entity_id: !input speaker_entity
+                  data:
+                    volume_level: "{{ tts_volume_level_normalized }}"
                 - action: tts.speak
                   target:
                     entity_id: !input tts_engine_entity
@@ -243,6 +293,16 @@ actions:
                     media_player_entity_id: !input speaker_entity
                     message: "{{ door_tts_message }}"
                     cache: true
+                - delay:
+                    seconds: !input tts_volume_restore_delay
+                - choose:
+                    - conditions: "{{ previous_volume_level != none }}"
+                      sequence:
+                        - action: media_player.volume_set
+                          target:
+                            entity_id: !input speaker_entity
+                          data:
+                            volume_level: "{{ previous_volume_level }}"
                 - delay:
                     seconds: !input tts_repeat_interval
       - alias: Temperature has stayed below threshold
@@ -268,6 +328,13 @@ actions:
                   entity_id: !input temperature_sensor_entity
                   below: !input temperature_threshold
               sequence:
+                - variables:
+                    previous_volume_level: "{{ state_attr(speaker_entity, 'volume_level') }}"
+                - action: media_player.volume_set
+                  target:
+                    entity_id: !input speaker_entity
+                  data:
+                    volume_level: "{{ tts_volume_level_normalized }}"
                 - action: tts.speak
                   target:
                     entity_id: !input tts_engine_entity
@@ -275,6 +342,16 @@ actions:
                     media_player_entity_id: !input speaker_entity
                     message: "{{ temperature_tts_message }}"
                     cache: true
+                - delay:
+                    seconds: !input tts_volume_restore_delay
+                - choose:
+                    - conditions: "{{ previous_volume_level != none }}"
+                      sequence:
+                        - action: media_player.volume_set
+                          target:
+                            entity_id: !input speaker_entity
+                          data:
+                            volume_level: "{{ previous_volume_level }}"
                 - delay:
                     seconds: !input tts_repeat_interval
       - alias: Door closed or temperature recovered
