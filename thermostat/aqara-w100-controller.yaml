@@ -1,0 +1,386 @@
+blueprint:
+  name: Aqara W100 Thermostat Controller
+  description: >
+    Use an Aqara W100 in normal Zigbee2MQTT mode as a thermostat remote.
+    A Home Assistant input_number helper remains the source of truth while the
+    W100 buttons adjust the room setpoint. The W100 secondary value temporarily
+    shows the setpoint after button presses, then returns to the external room
+    temperature. W100 values are updated through Home Assistant entities exposed
+    by Zigbee2MQTT, not direct MQTT publishing.
+
+
+    **Version:** 1.0.0
+
+
+    **Changelog:**
+
+    - 1.0.0: Initial release with external temperature/humidity display sync
+      and plus/minus setpoint control. Center press restores the external
+      temperature display immediately. Double center press shows the room
+      setpoint.
+  domain: automation
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    w100_device:
+      name: (Required) Aqara W100 Device
+      description: >
+        Aqara W100 paired through Zigbee2MQTT. The blueprint derives the W100
+        action trigger and writable entities from this device.
+      selector:
+        device:
+          filter:
+            integration: mqtt
+            manufacturer: Aqara
+            model: Climate Sensor W100
+          multiple: false
+    target_climate_entities:
+      name: (Required) Target Climate Entities
+      description: >
+        Climate entities whose target temperature should follow the room
+        setpoint helper.
+      selector:
+        entity:
+          filter:
+            domain: climate
+          multiple: true
+    room_setpoint_entity:
+      name: (Required) Room Setpoint Helper
+      description: >
+        Input number helper used as the source of truth for the room target
+        temperature. W100 button presses update this helper, and this helper is
+        synced to all target climate entities.
+      selector:
+        entity:
+          filter:
+            domain: input_number
+          multiple: false
+    external_temperature_sensor_entity:
+      name: (Required) External Temperature Sensor
+      description: Temperature sensor value to show on the W100 when not adjusting the setpoint.
+      selector:
+        entity:
+          filter:
+            domain: sensor
+            device_class: temperature
+          multiple: false
+    external_humidity_sensor_entity:
+      name: External Humidity Sensor (optional)
+      description: Optional humidity sensor value to send to the W100.
+      default: ''
+      selector:
+        entity:
+          filter:
+            domain: sensor
+            device_class: humidity
+          multiple: false
+    feedback_timer_entity:
+      name: (Required) Setpoint Feedback Timer
+      description: >
+        Timer helper used to return the W100 secondary display from temporary
+        setpoint feedback back to the external temperature.
+      selector:
+        entity:
+          filter:
+            domain: timer
+          multiple: false
+    setpoint_step:
+      name: Setpoint Step
+      description: Temperature change applied for each plus/minus button press.
+      default: 0.5
+      selector:
+        number:
+          min: 0.1
+          max: 5
+          step: 0.1
+          mode: slider
+          unit_of_measurement: °C
+    feedback_timeout_seconds:
+      name: Feedback Timeout
+      description: Seconds to show the adjusted setpoint before returning to external temperature.
+      default: 30
+      selector:
+        number:
+          min: 1
+          max: 300
+          step: 1
+          mode: slider
+          unit_of_measurement: seconds
+    min_setpoint:
+      name: Minimum Setpoint
+      description: Lowest target temperature this blueprint will set.
+      default: 5
+      selector:
+        number:
+          min: -20
+          max: 60
+          step: 0.5
+          mode: box
+          unit_of_measurement: °C
+    max_setpoint:
+      name: Maximum Setpoint
+      description: Highest target temperature this blueprint will set.
+      default: 30
+      selector:
+        number:
+          min: -20
+          max: 60
+          step: 0.5
+          mode: box
+          unit_of_measurement: °C
+  source_url: https://github.com/Nicolai-/ha-blueprints/blob/main/thermostat/aqara-w100-controller.yaml
+
+triggers:
+  - trigger: device
+    domain: mqtt
+    device_id: !input w100_device
+    type: action
+    subtype: single_plus
+    id: single_plus
+  - trigger: device
+    domain: mqtt
+    device_id: !input w100_device
+    type: action
+    subtype: single_minus
+    id: single_minus
+  - trigger: device
+    domain: mqtt
+    device_id: !input w100_device
+    type: action
+    subtype: single_center
+    id: single_center
+  - trigger: device
+    domain: mqtt
+    device_id: !input w100_device
+    type: action
+    subtype: double_center
+    id: double_center
+  - trigger: state
+    entity_id: !input external_temperature_sensor_entity
+    id: external_temperature
+  - trigger: state
+    entity_id: !input external_humidity_sensor_entity
+    id: external_humidity
+  - trigger: state
+    entity_id: !input room_setpoint_entity
+    id: room_setpoint
+  - trigger: event
+    event_type: timer.finished
+    event_data:
+      entity_id: !input feedback_timer_entity
+    id: feedback_timer_finished
+  - trigger: homeassistant
+    event: start
+    id: startup
+  - trigger: time_pattern
+    minutes: /30
+    id: backup
+
+variables:
+  w100_device: !input w100_device
+  w100_external_temperature_entity: >
+    {% set entities = device_entities(w100_device) %}
+    {{ entities
+      | select('match', 'number\\..*_external_temperature$')
+      | list | first | default('') }}
+  w100_external_humidity_entity: >
+    {% set entities = device_entities(w100_device) %}
+    {{ entities
+      | select('match', 'number\\..*_external_humidity$')
+      | list | first | default('') }}
+  w100_sensor_select_entity: >
+    {% set entities = device_entities(w100_device) %}
+    {{ entities
+      | select('match', 'select\\..*_sensor$')
+      | list | first | default('') }}
+  w100_thermostat_mode_entity: >
+    {% set entities = device_entities(w100_device) %}
+    {{ entities
+      | select('match', 'switch\\..*_thermostat_mode$')
+      | list | first | default('') }}
+  target_climate_entities: !input target_climate_entities
+  room_setpoint_entity: !input room_setpoint_entity
+  external_temperature_sensor_entity: !input external_temperature_sensor_entity
+  external_humidity_sensor_entity: !input external_humidity_sensor_entity
+  feedback_timer_entity: !input feedback_timer_entity
+  setpoint_step: !input setpoint_step
+  feedback_timeout_seconds: !input feedback_timeout_seconds
+  min_setpoint: !input min_setpoint
+  max_setpoint: !input max_setpoint
+  external_temperature_available: "{{ states(external_temperature_sensor_entity) | is_number }}"
+  room_setpoint_available: "{{ states(room_setpoint_entity) | is_number }}"
+  room_setpoint_value: "{{ states(room_setpoint_entity) | float(min_setpoint) | round(1) }}"
+  w100_action: "{{ trigger.id if trigger.id in ['single_plus', 'single_minus', 'single_center', 'double_center'] else '' }}"
+  external_temperature_value: "{{ states(external_temperature_sensor_entity) | float(0) | round(1) }}"
+  external_humidity_available: "{{ external_humidity_sensor_entity != '' and states(external_humidity_sensor_entity) | is_number }}"
+  external_humidity_value: "{{ states(external_humidity_sensor_entity) | float(0) | round(0) }}"
+
+actions:
+  - choose:
+      - alias: Adjust climate setpoint from W100 plus/minus
+        conditions:
+          - condition: template
+            value_template: "{{ w100_action | trim in ['single_plus', 'single_minus'] }}"
+          - condition: template
+            value_template: "{{ room_setpoint_available }}"
+          - condition: template
+            value_template: "{{ w100_external_temperature_entity | trim != '' }}"
+        sequence:
+          - variables:
+              current_setpoint: "{{ states(room_setpoint_entity) | float(min_setpoint) }}"
+              new_setpoint: >
+                {% set direction = 1 if w100_action | trim == 'single_plus' else -1 %}
+                {% set current = current_setpoint | float %}
+                {% set step = setpoint_step | float %}
+                {% set requested = current + (direction * step) %}
+                {% if requested < min_setpoint | float %}
+                  {{ min_setpoint | float }}
+                {% elif requested > max_setpoint | float %}
+                  {{ max_setpoint | float }}
+                {% else %}
+                  {{ requested | round(1) }}
+                {% endif %}
+          - alias: Update room setpoint helper
+            action: input_number.set_value
+            target:
+              entity_id: !input room_setpoint_entity
+            data:
+              value: "{{ new_setpoint }}"
+          - alias: Show adjusted setpoint on W100 secondary display
+            action: number.set_value
+            target:
+              entity_id: "{{ w100_external_temperature_entity }}"
+            data:
+              value: "{{ new_setpoint | float | round(1) }}"
+          - alias: Restart setpoint feedback timer
+            action: timer.start
+            target:
+              entity_id: !input feedback_timer_entity
+            data:
+              duration:
+                seconds: "{{ feedback_timeout_seconds | int }}"
+          - alias: Log W100 setpoint adjustment
+            action: logbook.log
+            data:
+              name: Aqara W100
+              message: "Set room target temperature to {{ new_setpoint }}°C"
+              entity_id: !input room_setpoint_entity
+
+  - if:
+      - condition: trigger
+        id: double_center
+      - condition: template
+        value_template: "{{ room_setpoint_available }}"
+      - condition: template
+        value_template: "{{ w100_external_temperature_entity | trim != '' }}"
+    then:
+      - alias: Show room setpoint on W100 secondary display
+        action: number.set_value
+        target:
+          entity_id: "{{ w100_external_temperature_entity }}"
+        data:
+          value: "{{ room_setpoint_value }}"
+      - alias: Restart setpoint feedback timer
+        action: timer.start
+        target:
+          entity_id: !input feedback_timer_entity
+        data:
+          duration:
+            seconds: "{{ feedback_timeout_seconds | int }}"
+
+  - if:
+      - condition: trigger
+        id:
+          - room_setpoint
+          - startup
+          - backup
+      - condition: template
+        value_template: "{{ room_setpoint_available }}"
+    then:
+      - alias: Sync room setpoint to target climate entities
+        action: climate.set_temperature
+        target:
+          entity_id: !input target_climate_entities
+        data:
+          temperature: "{{ room_setpoint_value }}"
+      - alias: Log room setpoint sync
+        action: logbook.log
+        data:
+          name: Aqara W100
+          message: "Synced target climate entities to {{ room_setpoint_value }}°C"
+          entity_id: !input room_setpoint_entity
+
+  - if:
+      - condition: trigger
+        id:
+          - startup
+          - backup
+          - external_temperature
+          - feedback_timer_finished
+          - single_center
+      - condition: template
+        value_template: "{{ w100_thermostat_mode_entity | trim != '' }}"
+      - condition: template
+        value_template: "{{ w100_sensor_select_entity | trim != '' }}"
+    then:
+      - alias: Keep W100 in normal mode with external sensor display
+        action: switch.turn_off
+        target:
+          entity_id: "{{ w100_thermostat_mode_entity }}"
+      - alias: Select external sensor display on W100
+        action: select.select_option
+        target:
+          entity_id: "{{ w100_sensor_select_entity }}"
+        data:
+          option: external
+
+  - if:
+      - condition: trigger
+        id:
+          - startup
+          - backup
+          - external_temperature
+          - feedback_timer_finished
+          - single_center
+      - condition: template
+        value_template: "{{ is_state(feedback_timer_entity, 'idle') or trigger.id in ['startup', 'backup', 'feedback_timer_finished', 'single_center'] }}"
+      - condition: template
+        value_template: "{{ external_temperature_available }}"
+      - condition: template
+        value_template: "{{ w100_external_temperature_entity | trim != '' }}"
+    then:
+      - alias: Set external temperature on W100
+        action: number.set_value
+        target:
+          entity_id: "{{ w100_external_temperature_entity }}"
+        data:
+          value: "{{ external_temperature_value }}"
+
+  - if:
+      - condition: trigger
+        id: single_center
+    then:
+      - alias: Stop temporary setpoint feedback
+        action: timer.cancel
+        target:
+          entity_id: !input feedback_timer_entity
+
+  - if:
+      - condition: trigger
+        id:
+          - startup
+          - backup
+          - external_temperature
+          - external_humidity
+          - feedback_timer_finished
+      - condition: template
+        value_template: "{{ external_humidity_available and w100_external_humidity_entity | trim != '' }}"
+    then:
+      - alias: Set external humidity on W100
+        action: number.set_value
+        target:
+          entity_id: "{{ w100_external_humidity_entity }}"
+        data:
+          value: "{{ external_humidity_value | float | round(0) }}"
+
+mode: restart
