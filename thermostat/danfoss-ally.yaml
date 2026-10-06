@@ -6,10 +6,12 @@ blueprint:
     for multiple TRVs in the same room.
 
 
-    **Version:** 1.1.1
+    **Version:** 1.1.2
 
 
     **Changelog:**
+
+    - 1.1.2: Fall back to the first Ally local_temperature when the room sensor is unavailable or unknown
 
     - 1.1.1: Added configurable Algorithm Scale Factor setting
 
@@ -99,6 +101,11 @@ variables:
   danfoss_ally_devices: !input danfoss_ally_devices
   all_danfoss_entities: "{{ danfoss_ally_devices | map('device_entities') | sum(start=[]) }}"
   danfoss_ally_external_measured_room_sensor_entities: "{{ all_danfoss_entities | select('match', 'number.*_external_measured_room_sensor$') | list }}"
+  local_temperature_entity: >-
+    {%- if danfoss_ally_devices | count > 0 -%}
+    {%- set entities = (danfoss_ally_devices | first) | device_entities | select('match', 'sensor.*_local_temperature$') | list -%}
+    {{- entities[0] if entities | count > 0 else '' -}}
+    {%- endif -%}
   danfoss_ally_window_open_external_entities: "{{ all_danfoss_entities | select('match', 'switch.*_window_open_external') | list }}"
   danfoss_ally_load_room_mean_entities: "{{ all_danfoss_entities | select('match', 'number.*_load_room_mean$') | list }}"
   danfoss_ally_load_balancing_enable_entities: "{{ all_danfoss_entities | select('match', 'switch.*_load_balancing_enable$') | list }}"
@@ -115,6 +122,8 @@ variables:
     {{ (valid_states | sum / valid_states | count) | round }}
     {% endif %}
   temperature_sensor_entity: !input temperature_sensor_entity
+  effective_temperature_entity: '{{ temperature_sensor_entity if is_number(states(temperature_sensor_entity)) else local_temperature_entity }}'
+  effective_temperature_hundredths: '{{ ((states(effective_temperature_entity) | float(0) * 100) | round(0)) if is_number(states(effective_temperature_entity)) else "" }}'
   window_sensor_entities: !input window_sensor_entities
   earliest_update_time: !input earliest_update_time
   external_measured_room_sensor_read_entity: '{{ danfoss_ally_external_measured_room_sensor_entities | first }}'
@@ -126,7 +135,7 @@ conditions:
         id:
           - time
       - condition: template
-        value_template: '{{ (states(external_measured_room_sensor_read_entity) | int - (states(temperature_sensor_entity) | float * 100) | round) | abs >= 10 }}'
+        value_template: '{{ is_number(effective_temperature_hundredths) and is_number(states(external_measured_room_sensor_read_entity)) and ((states(external_measured_room_sensor_read_entity) | int(0) - (effective_temperature_hundredths | int(0))) | abs >= 10) }}'
       - condition: template
         value_template: '{{ now() > states(earliest_update_time) | as_datetime | as_local }}'
 actions:
@@ -182,11 +191,14 @@ actions:
           - backup
     then:
       - if:
+          - alias: Temperature is available from the room sensor or the first Ally local temperature
+            condition: template
+            value_template: '{{ is_number(effective_temperature_hundredths) }}'
           - condition: or
             conditions:
               - alias: If temperature has changed at least 0.1K
                 condition: template
-                value_template: '{{ (states(external_measured_room_sensor_read_entity) | int - (states(temperature_sensor_entity) | float * 100) | round) | abs >= 10 }}'
+                value_template: '{{ is_number(states(external_measured_room_sensor_read_entity)) and ((states(external_measured_room_sensor_read_entity) | int(0) - (effective_temperature_hundredths | int(0))) | abs >= 10) }}'
               - alias: If we've not updated within the last 30 minutes
                 condition: template
                 value_template: '{{ now() > states(earliest_update_time) | as_datetime | as_local }}'
@@ -195,7 +207,7 @@ actions:
             target:
               entity_id: '{{ danfoss_ally_external_measured_room_sensor_entities }}'
             data:
-              value: '{{ (states(temperature_sensor_entity) | float * 100) | round }}'
+              value: '{{ effective_temperature_hundredths }}'
           - action: input_datetime.set_datetime
             target:
               entity_id: !input earliest_update_time
