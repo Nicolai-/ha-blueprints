@@ -21,8 +21,13 @@ blueprint:
 
     - **Heartbeat:** a pulse that speeds up during the effect.
 
-    - **Haunted flicker:** slow, irregular brightness changes with short
-      blackouts.
+    - **Haunted flicker:** irregular brightness changes with short blackouts.
+      With member lights selected, each light flickers on its own using direct
+      commands, which allows a much faster flicker than group commands.
+
+
+    The intensity setting controls how fast and wild the flicker, sputter and
+    lightning get.
 
 
     A matching sound pack is available in light/sounds/halloween. Upload the
@@ -33,10 +38,15 @@ blueprint:
     trigger. Select a single effect to lock it.
 
 
-    **Version:** 1.0.0
+    **Version:** 1.1.0
 
 
     **Changelog:**
+
+    - 1.1.0: Added an intensity setting (calm, normal, aggressive). Haunted
+      flicker and power failure sputter now drive the member lights
+      individually for a faster, independent flicker. Aggressive mode gives
+      more frequent lightning with longer flash bursts.
 
     - 1.0.0: Initial release with lightning, jump scare, power failure,
       heartbeat and flicker effects, optional sounds and state restore.
@@ -119,9 +129,9 @@ blueprint:
           name: Member lights
           description: >
             The individual lights in the group. They are snapshotted before the
-            effect and restored afterwards. Zigbee2MQTT group state is only
-            assumed, so restoring the members is more reliable. When empty, the
-            group itself is restored.
+            effect and restored afterwards, and the flicker and sputter effects
+            control them one by one so each light flickers on its own. When
+            empty, the group itself is used for flicker and restore.
           default: []
           selector:
             entity:
@@ -169,6 +179,23 @@ blueprint:
               step: 1
               unit_of_measurement: minutes
               mode: slider
+        effect_intensity:
+          name: Intensity
+          description: >
+            How fast and wild the flicker, sputter and lightning are. Aggressive
+            sends more Zigbee commands; if lights start lagging or missing
+            commands, step down to normal.
+          default: aggressive
+          selector:
+            select:
+              mode: list
+              options:
+                - label: Calm
+                  value: calm
+                - label: Normal
+                  value: normal
+                - label: Aggressive
+                  value: aggressive
 
     sound_section:
       name: Sound (optional)
@@ -279,6 +306,54 @@ variables:
   power_failure_sound: !input power_failure_sound
   heartbeat_sound: !input heartbeat_sound
   flicker_sound: !input flicker_sound
+  effect_intensity: !input effect_intensity
+  # Delays in milliseconds. Per-light delays apply to direct (unicast) commands,
+  # group delays stay slower because group commands are Zigbee broadcasts.
+  effect_timings:
+    calm:
+      flicker_light_min: 900
+      flicker_light_max: 1800
+      flicker_group_min: 1200
+      flicker_group_max: 2200
+      flicker_levels: [10, 25, 40, 55, 70, 85, 100]
+      blackout_chance: 10
+      sputters: 2
+      sputter_min: 600
+      sputter_max: 1000
+      strike_min: 7000
+      strike_max: 14000
+      flashes_min: 1
+      flashes_max: 2
+    normal:
+      flicker_light_min: 400
+      flicker_light_max: 1000
+      flicker_group_min: 800
+      flicker_group_max: 1700
+      flicker_levels: [5, 15, 30, 50, 70, 85, 100]
+      blackout_chance: 12
+      sputters: 3
+      sputter_min: 400
+      sputter_max: 800
+      strike_min: 5000
+      strike_max: 11000
+      flashes_min: 1
+      flashes_max: 3
+    aggressive:
+      flicker_light_min: 120
+      flicker_light_max: 400
+      flicker_group_min: 500
+      flicker_group_max: 1000
+      flicker_levels: [1, 1, 5, 10, 30, 70, 100, 100]
+      blackout_chance: 5
+      sputters: 6
+      sputter_min: 120
+      sputter_max: 350
+      strike_min: 3000
+      strike_max: 7000
+      flashes_min: 2
+      flashes_max: 4
+  timing: "{{ effect_timings[effect_intensity] }}"
+  per_light_flicker: "{{ restore_lights | count > 0 }}"
   media_enabled: "{{ media_player | trim != '' }}"
   snapshot_entities: "{{ restore_lights if restore_lights | count > 0 else [effect_light_group] }}"
   snapshot_scene_id: "{{ this.entity_id | replace('automation.', '') ~ '_effect_snapshot' }}"
@@ -361,10 +436,10 @@ actions:
               sequence:
                 - alias: Wait for the next strike
                   delay:
-                    milliseconds: "{{ range(5000, 11000) | random }}"
+                    milliseconds: "{{ range(timing.strike_min, timing.strike_max) | random }}"
                 - alias: Flash burst
                   repeat:
-                    count: "{{ range(1, 4) | random }}"
+                    count: "{{ range(timing.flashes_min, timing.flashes_max + 1) | random }}"
                     sequence:
                       - action: light.turn_on
                         target:
@@ -438,16 +513,21 @@ actions:
               sequence:
                 - alias: Sputter
                   repeat:
-                    count: 3
+                    count: "{{ timing.sputters }}"
                     sequence:
                       - action: light.turn_on
                         target:
-                          entity_id: "{{ effect_light_group }}"
+                          entity_id: "{{ restore_lights | random if per_light_flicker else effect_light_group }}"
                         data:
-                          brightness_pct: "{{ range(15, 90) | random }}"
+                          brightness_pct: "{{ timing.flicker_levels | random }}"
                           transition: 0
                       - delay:
-                          milliseconds: "{{ range(500, 900) | random }}"
+                          milliseconds: >
+                            {% if per_light_flicker %}
+                              {{ range(timing.sputter_min, timing.sputter_max) | random }}
+                            {% else %}
+                              {{ range([timing.sputter_min, 500] | max, [timing.sputter_max, 900] | max) | random }}
+                            {% endif %}
                 - alias: Fade out
                   action: light.turn_on
                   target:
@@ -510,7 +590,7 @@ actions:
             - if:
                 - alias: Occasional short blackout
                   condition: template
-                  value_template: "{{ range(0, 100) | random < 15 }}"
+                  value_template: "{{ range(0, 100) | random < timing.blackout_chance }}"
               then:
                 - action: light.turn_off
                   target:
@@ -518,16 +598,22 @@ actions:
                   data:
                     transition: 0
                 - delay:
-                    milliseconds: "{{ range(1000, 2500) | random }}"
+                    milliseconds: "{{ range(400, 1500) | random }}"
               else:
-                - action: light.turn_on
+                - alias: Flicker one random member light, or the whole group
+                  action: light.turn_on
                   target:
-                    entity_id: "{{ effect_light_group }}"
+                    entity_id: "{{ restore_lights | random if per_light_flicker else effect_light_group }}"
                   data:
-                    brightness_pct: "{{ range(5, 101) | random }}"
-                    transition: "{{ range(0, 4) | random / 10 }}"
+                    brightness_pct: "{{ timing.flicker_levels | random }}"
+                    transition: 0
                 - delay:
-                    milliseconds: "{{ range(800, 1700) | random }}"
+                    milliseconds: >
+                      {% if per_light_flicker %}
+                        {{ range(timing.flicker_light_min, timing.flicker_light_max) | random }}
+                      {% else %}
+                        {{ range(timing.flicker_group_min, timing.flicker_group_max) | random }}
+                      {% endif %}
 
   - alias: Restore lights
     action: scene.turn_on
