@@ -15,7 +15,7 @@ blueprint:
 
     - **Jump scare:** silent blackout, then all lights slam to full brightness
       together with a scream, followed by haunted flicker while the scream
-      repeats every 2-5 seconds.
+      repeats every 10-15 seconds (adjustable).
 
     - **Power failure:** the lights sputter, fade out, stay dark, then surge
       back on.
@@ -42,10 +42,13 @@ blueprint:
     before any effect repeats.
 
 
-    **Version:** 1.5.0
+    **Version:** 1.6.0
 
 
     **Changelog:**
+
+    - 1.6.0: The jump scare scream now repeats every 10-15 seconds by
+      default, with new inputs to set the shortest and longest interval.
 
     - 1.5.0: Heartbeat lights now follow the same beat schedule as the
       heartbeat sound (2.5 s to 1.5 s over the first 2 minutes) and are timed
@@ -271,11 +274,33 @@ blueprint:
         scream_sound:
           name: Scream sound
           description: >
-            Played when the jump scare lights slam on, then repeated every 2-5
-            seconds until the effect ends. Clear it to disable.
+            Played when the jump scare lights slam on, then repeated at a random
+            interval (see below) until the effect ends. Clear it to disable.
           default: 'media-source://media_source/local/halloween/scream.wav'
           selector:
             text:
+        scream_interval_min:
+          name: Scream repeat interval (shortest)
+          description: Shortest pause before the jump scare scream plays again.
+          default: 10
+          selector:
+            number:
+              min: 2
+              max: 60
+              step: 1
+              unit_of_measurement: seconds
+              mode: slider
+        scream_interval_max:
+          name: Scream repeat interval (longest)
+          description: Longest pause before the jump scare scream plays again.
+          default: 15
+          selector:
+            number:
+              min: 2
+              max: 60
+              step: 1
+              unit_of_measurement: seconds
+              mode: slider
         power_failure_sound:
           name: Power failure sound
           description: Played once when the power failure effect starts. Clear it to disable.
@@ -342,6 +367,8 @@ variables:
   media_volume: !input media_volume
   thunder_sound: !input thunder_sound
   scream_sound: !input scream_sound
+  scream_interval_min: !input scream_interval_min
+  scream_interval_max: !input scream_interval_max
   power_failure_sound: !input power_failure_sound
   heartbeat_sound: !input heartbeat_sound
   flicker_sound: !input flicker_sound
@@ -732,11 +759,13 @@ actions:
                   data:
                     media_content_id: "{{ scream_sound | trim }}"
                     media_content_type: music
-                - alias: Wait 2-5 seconds, but never past the end of the effect
+                - alias: Wait the scream interval, but never past the end of the effect
                   delay:
                     milliseconds: >
                       {% set remaining_ms = ((effect_end_ts - as_timestamp(now())) * 1000) | int %}
-                      {{ [[range(2000, 5001) | random, remaining_ms] | min, 0] | max }}
+                      {% set shortest_ms = ([scream_interval_min, scream_interval_max] | min * 1000) | int %}
+                      {% set longest_ms = ([scream_interval_min, scream_interval_max] | max * 1000) | int %}
+                      {{ [[range(shortest_ms, longest_ms + 1) | random, remaining_ms] | min, 0] | max }}
 
   - alias: Restore lights
     action: scene.turn_on
