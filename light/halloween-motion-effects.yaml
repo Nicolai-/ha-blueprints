@@ -38,10 +38,14 @@ blueprint:
     trigger. Select a single effect to lock it.
 
 
-    **Version:** 1.1.0
+    **Version:** 1.2.0
 
 
     **Changelog:**
+
+    - 1.2.0: Haunted flicker now changes several member lights per step
+      (about half of them on aggressive) instead of one, so every light
+      flickers several times per second.
 
     - 1.1.0: Added an intensity setting (calm, normal, aggressive). Haunted
       flicker and power failure sputter now drive the member lights
@@ -309,6 +313,8 @@ variables:
   effect_intensity: !input effect_intensity
   # Delays in milliseconds. Per-light delays apply to direct (unicast) commands,
   # group delays stay slower because group commands are Zigbee broadcasts.
+  # flicker_share is the chance (%) that each member light changes per flicker
+  # step; at least one light always changes.
   effect_timings:
     calm:
       flicker_light_min: 900
@@ -316,6 +322,7 @@ variables:
       flicker_group_min: 1200
       flicker_group_max: 2200
       flicker_levels: [10, 25, 40, 55, 70, 85, 100]
+      flicker_share: 0
       blackout_chance: 10
       sputters: 2
       sputter_min: 600
@@ -330,6 +337,7 @@ variables:
       flicker_group_min: 800
       flicker_group_max: 1700
       flicker_levels: [5, 15, 30, 50, 70, 85, 100]
+      flicker_share: 30
       blackout_chance: 12
       sputters: 3
       sputter_min: 400
@@ -339,11 +347,12 @@ variables:
       flashes_min: 1
       flashes_max: 3
     aggressive:
-      flicker_light_min: 120
-      flicker_light_max: 400
+      flicker_light_min: 150
+      flicker_light_max: 350
       flicker_group_min: 500
       flicker_group_max: 1000
       flicker_levels: [1, 1, 5, 10, 30, 70, 100, 100]
+      flicker_share: 50
       blackout_chance: 5
       sputters: 6
       sputter_min: 120
@@ -600,13 +609,29 @@ actions:
                 - delay:
                     milliseconds: "{{ range(400, 1500) | random }}"
               else:
-                - alias: Flicker one random member light, or the whole group
-                  action: light.turn_on
-                  target:
-                    entity_id: "{{ restore_lights | random if per_light_flicker else effect_light_group }}"
-                  data:
-                    brightness_pct: "{{ timing.flicker_levels | random }}"
-                    transition: 0
+                - variables:
+                    flicker_targets: >
+                      {%- if per_light_flicker -%}
+                        {%- set ns = namespace(lights=[]) -%}
+                        {%- for light_entity in restore_lights -%}
+                          {%- if range(0, 100) | random < timing.flicker_share -%}
+                            {%- set ns.lights = ns.lights + [light_entity] -%}
+                          {%- endif -%}
+                        {%- endfor -%}
+                        {{ ns.lights if ns.lights | count > 0 else [restore_lights | random] }}
+                      {%- else -%}
+                        {{ [effect_light_group] }}
+                      {%- endif -%}
+                - alias: Flicker random member lights, each to its own brightness
+                  repeat:
+                    for_each: "{{ flicker_targets }}"
+                    sequence:
+                      - action: light.turn_on
+                        target:
+                          entity_id: "{{ repeat.item }}"
+                        data:
+                          brightness_pct: "{{ timing.flicker_levels | random }}"
+                          transition: 0
                 - delay:
                     milliseconds: >
                       {% if per_light_flicker %}
