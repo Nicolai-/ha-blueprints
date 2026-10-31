@@ -14,7 +14,8 @@ blueprint:
       by thunder on the speaker.
 
     - **Jump scare:** silent blackout, then all lights slam to full brightness
-      together with a scream, followed by haunted flicker.
+      together with a scream, followed by haunted flicker while the scream
+      repeats every 2-5 seconds.
 
     - **Power failure:** the lights sputter, fade out, stay dark, then surge
       back on.
@@ -40,10 +41,13 @@ blueprint:
     before any effect repeats.
 
 
-    **Version:** 1.3.0
+    **Version:** 1.4.0
 
 
     **Changelog:**
+
+    - 1.4.0: The jump scare scream now repeats every 2-5 seconds for the
+      whole effect instead of playing once.
 
     - 1.3.0: Optional shuffle mode. With an input_text helper selected as
       effect history, every enabled effect plays once before any repeats,
@@ -261,7 +265,9 @@ blueprint:
             text:
         scream_sound:
           name: Scream sound
-          description: Played when the jump scare lights slam on. Clear it to disable.
+          description: >
+            Played when the jump scare lights slam on, then repeated every 2-5
+            seconds until the effect ends. Clear it to disable.
           default: 'media-source://media_source/local/halloween/scream.wav'
           selector:
             text:
@@ -416,6 +422,8 @@ actions:
       effect_history: "{{ ([selected_effect] if new_round else played_effects + [selected_effect]) | join(',') }}"
       effect_start_ts: "{{ as_timestamp(now()) }}"
       effect_end_ts: "{{ as_timestamp(now()) + effect_duration_minutes * 60 }}"
+      # Shared by the light intro and the scream loop so the first scream hits with the lights
+      scare_blackout_ms: "{{ range(2000, 3500) | random }}"
       original_volume: "{{ state_attr(media_player, 'volume_level') if media_enabled else none }}"
       start_sound: >
         {{ {
@@ -488,213 +496,229 @@ actions:
               seconds: 2
 
   - alias: Run the effect until the duration has passed
-    repeat:
-      while:
-        - condition: template
-          value_template: "{{ as_timestamp(now()) < effect_end_ts }}"
-      sequence:
-        - choose:
-            - alias: Lightning storm
-              conditions:
-                - condition: template
-                  value_template: "{{ selected_effect == 'lightning' }}"
-              sequence:
-                - alias: Wait for the next strike
-                  delay:
-                    milliseconds: "{{ range(timing.strike_min, timing.strike_max) | random }}"
-                - alias: Flash burst
-                  repeat:
-                    count: "{{ range(timing.flashes_min, timing.flashes_max + 1) | random }}"
-                    sequence:
-                      - action: light.turn_on
-                        target:
-                          entity_id: "{{ effect_light_group }}"
-                        data:
-                          brightness_pct: 100
-                          transition: 0
-                      - delay:
-                          milliseconds: "{{ range(80, 200) | random }}"
-                      - action: light.turn_off
-                        target:
-                          entity_id: "{{ effect_light_group }}"
-                        data:
-                          transition: 0
-                      - delay:
-                          milliseconds: "{{ range(150, 400) | random }}"
-                - alias: Thunder follows the flash
-                  if:
+    parallel:
+      - alias: Light effect loop
+        repeat:
+          while:
+            - condition: template
+              value_template: "{{ as_timestamp(now()) < effect_end_ts }}"
+          sequence:
+            - choose:
+                - alias: Lightning storm
+                  conditions:
                     - condition: template
-                      value_template: "{{ media_enabled and thunder_sound | trim != '' }}"
-                  then:
+                      value_template: "{{ selected_effect == 'lightning' }}"
+                  sequence:
+                    - alias: Wait for the next strike
+                      delay:
+                        milliseconds: "{{ range(timing.strike_min, timing.strike_max) | random }}"
+                    - alias: Flash burst
+                      repeat:
+                        count: "{{ range(timing.flashes_min, timing.flashes_max + 1) | random }}"
+                        sequence:
+                          - action: light.turn_on
+                            target:
+                              entity_id: "{{ effect_light_group }}"
+                            data:
+                              brightness_pct: 100
+                              transition: 0
+                          - delay:
+                              milliseconds: "{{ range(80, 200) | random }}"
+                          - action: light.turn_off
+                            target:
+                              entity_id: "{{ effect_light_group }}"
+                            data:
+                              transition: 0
+                          - delay:
+                              milliseconds: "{{ range(150, 400) | random }}"
+                    - alias: Thunder follows the flash
+                      if:
+                        - condition: template
+                          value_template: "{{ media_enabled and thunder_sound | trim != '' }}"
+                      then:
+                        - delay:
+                            milliseconds: "{{ range(300, 1500) | random }}"
+                        - action: media_player.play_media
+                          continue_on_error: true
+                          target:
+                            entity_id: "{{ media_player }}"
+                          data:
+                            media_content_id: "{{ thunder_sound | trim }}"
+                            media_content_type: music
+
+                - alias: Jump scare intro (first round only)
+                  conditions:
+                    - condition: template
+                      value_template: "{{ selected_effect == 'jump_scare' and repeat.index == 1 }}"
+                  sequence:
+                    - alias: Silent blackout
+                      action: light.turn_off
+                      target:
+                        entity_id: "{{ effect_light_group }}"
+                      data:
+                        transition: 0
                     - delay:
-                        milliseconds: "{{ range(300, 1500) | random }}"
-                    - action: media_player.play_media
-                      continue_on_error: true
+                        milliseconds: "{{ scare_blackout_ms }}"
+                    - alias: Slam the lights on
+                      action: light.turn_on
                       target:
-                        entity_id: "{{ media_player }}"
+                        entity_id: "{{ effect_light_group }}"
                       data:
-                        media_content_id: "{{ thunder_sound | trim }}"
-                        media_content_type: music
+                        brightness_pct: 100
+                        transition: 0
+                    - delay:
+                        seconds: 3
 
-            - alias: Jump scare intro (first round only)
-              conditions:
-                - condition: template
-                  value_template: "{{ selected_effect == 'jump_scare' and repeat.index == 1 }}"
-              sequence:
-                - alias: Silent blackout
-                  action: light.turn_off
-                  target:
-                    entity_id: "{{ effect_light_group }}"
-                  data:
-                    transition: 0
-                - delay:
-                    milliseconds: "{{ range(2000, 3500) | random }}"
-                - alias: Scream
-                  if:
+                - alias: Power failure
+                  conditions:
                     - condition: template
-                      value_template: "{{ media_enabled and scream_sound | trim != '' }}"
-                  then:
-                    - action: media_player.play_media
-                      continue_on_error: true
+                      value_template: "{{ selected_effect == 'power_failure' }}"
+                  sequence:
+                    - alias: Sputter
+                      repeat:
+                        count: "{{ timing.sputters }}"
+                        sequence:
+                          - action: light.turn_on
+                            target:
+                              entity_id: "{{ restore_lights | random if per_light_flicker else effect_light_group }}"
+                            data:
+                              brightness_pct: "{{ timing.flicker_levels | random }}"
+                              transition: 0
+                          - delay:
+                              milliseconds: >
+                                {% if per_light_flicker %}
+                                  {{ range(timing.sputter_min, timing.sputter_max) | random }}
+                                {% else %}
+                                  {{ range([timing.sputter_min, 500] | max, [timing.sputter_max, 900] | max) | random }}
+                                {% endif %}
+                    - alias: Fade out
+                      action: light.turn_on
                       target:
-                        entity_id: "{{ media_player }}"
+                        entity_id: "{{ effect_light_group }}"
                       data:
-                        media_content_id: "{{ scream_sound | trim }}"
-                        media_content_type: music
-                - alias: Slam the lights on
-                  action: light.turn_on
-                  target:
-                    entity_id: "{{ effect_light_group }}"
-                  data:
-                    brightness_pct: 100
-                    transition: 0
-                - delay:
-                    seconds: 3
+                        brightness_pct: 3
+                        transition: 3
+                    - delay:
+                        seconds: 3
+                    - alias: Blackout
+                      action: light.turn_off
+                      target:
+                        entity_id: "{{ effect_light_group }}"
+                      data:
+                        transition: 0
+                    - delay:
+                        milliseconds: "{{ range(3000, 6000) | random }}"
+                    - alias: Power surges back
+                      action: light.turn_on
+                      target:
+                        entity_id: "{{ effect_light_group }}"
+                      data:
+                        brightness_pct: 100
+                        transition: 0
+                    - delay:
+                        milliseconds: "{{ range(5000, 10000) | random }}"
 
-            - alias: Power failure
-              conditions:
-                - condition: template
-                  value_template: "{{ selected_effect == 'power_failure' }}"
-              sequence:
-                - alias: Sputter
-                  repeat:
-                    count: "{{ timing.sputters }}"
-                    sequence:
-                      - action: light.turn_on
-                        target:
-                          entity_id: "{{ restore_lights | random if per_light_flicker else effect_light_group }}"
-                        data:
-                          brightness_pct: "{{ timing.flicker_levels | random }}"
-                          transition: 0
-                      - delay:
-                          milliseconds: >
-                            {% if per_light_flicker %}
-                              {{ range(timing.sputter_min, timing.sputter_max) | random }}
-                            {% else %}
-                              {{ range([timing.sputter_min, 500] | max, [timing.sputter_max, 900] | max) | random }}
-                            {% endif %}
-                - alias: Fade out
-                  action: light.turn_on
-                  target:
-                    entity_id: "{{ effect_light_group }}"
-                  data:
-                    brightness_pct: 3
-                    transition: 3
-                - delay:
-                    seconds: 3
-                - alias: Blackout
-                  action: light.turn_off
-                  target:
-                    entity_id: "{{ effect_light_group }}"
-                  data:
-                    transition: 0
-                - delay:
-                    milliseconds: "{{ range(3000, 6000) | random }}"
-                - alias: Power surges back
-                  action: light.turn_on
-                  target:
-                    entity_id: "{{ effect_light_group }}"
-                  data:
-                    brightness_pct: 100
-                    transition: 0
-                - delay:
-                    milliseconds: "{{ range(5000, 10000) | random }}"
+                - alias: Heartbeat
+                  conditions:
+                    - condition: template
+                      value_template: "{{ selected_effect == 'heartbeat' }}"
+                  sequence:
+                    - variables:
+                        # Beat period shrinks from 2.5 s to 1.5 s as the effect progresses
+                        effect_progress: >
+                          {% set elapsed = as_timestamp(now()) - effect_start_ts %}
+                          {{ [elapsed / (effect_duration_minutes * 60), 1] | min }}
+                        beat_period_ms: "{{ (2500 - 1000 * effect_progress) | int }}"
+                    - alias: Beat
+                      action: light.turn_on
+                      target:
+                        entity_id: "{{ effect_light_group }}"
+                      data:
+                        brightness_pct: 100
+                        transition: 0
+                    - delay:
+                        milliseconds: 200
+                    - alias: Fade between beats
+                      action: light.turn_on
+                      target:
+                        entity_id: "{{ effect_light_group }}"
+                      data:
+                        brightness_pct: 5
+                        transition: "{{ (beat_period_ms * 0.6 / 1000) | round(1) }}"
+                    - delay:
+                        milliseconds: "{{ beat_period_ms - 200 }}"
 
-            - alias: Heartbeat
-              conditions:
-                - condition: template
-                  value_template: "{{ selected_effect == 'heartbeat' }}"
-              sequence:
-                - variables:
-                    # Beat period shrinks from 2.5 s to 1.5 s as the effect progresses
-                    effect_progress: >
-                      {% set elapsed = as_timestamp(now()) - effect_start_ts %}
-                      {{ [elapsed / (effect_duration_minutes * 60), 1] | min }}
-                    beat_period_ms: "{{ (2500 - 1000 * effect_progress) | int }}"
-                - alias: Beat
-                  action: light.turn_on
-                  target:
-                    entity_id: "{{ effect_light_group }}"
-                  data:
-                    brightness_pct: 100
-                    transition: 0
-                - delay:
-                    milliseconds: 200
-                - alias: Fade between beats
-                  action: light.turn_on
-                  target:
-                    entity_id: "{{ effect_light_group }}"
-                  data:
-                    brightness_pct: 5
-                    transition: "{{ (beat_period_ms * 0.6 / 1000) | round(1) }}"
-                - delay:
-                    milliseconds: "{{ beat_period_ms - 200 }}"
-
-          # Haunted flicker, also used after the jump scare intro
-          default:
-            - if:
-                - alias: Occasional short blackout
-                  condition: template
-                  value_template: "{{ range(0, 100) | random < timing.blackout_chance }}"
-              then:
-                - action: light.turn_off
-                  target:
-                    entity_id: "{{ effect_light_group }}"
-                  data:
-                    transition: 0
-                - delay:
-                    milliseconds: "{{ range(400, 1500) | random }}"
-              else:
-                - variables:
-                    flicker_targets: >
-                      {%- if per_light_flicker -%}
-                        {%- set ns = namespace(lights=[]) -%}
-                        {%- for light_entity in restore_lights -%}
-                          {%- if range(0, 100) | random < timing.flicker_share -%}
-                            {%- set ns.lights = ns.lights + [light_entity] -%}
+              # Haunted flicker, also used after the jump scare intro
+              default:
+                - if:
+                    - alias: Occasional short blackout
+                      condition: template
+                      value_template: "{{ range(0, 100) | random < timing.blackout_chance }}"
+                  then:
+                    - action: light.turn_off
+                      target:
+                        entity_id: "{{ effect_light_group }}"
+                      data:
+                        transition: 0
+                    - delay:
+                        milliseconds: "{{ range(400, 1500) | random }}"
+                  else:
+                    - variables:
+                        flicker_targets: >
+                          {%- if per_light_flicker -%}
+                            {%- set ns = namespace(lights=[]) -%}
+                            {%- for light_entity in restore_lights -%}
+                              {%- if range(0, 100) | random < timing.flicker_share -%}
+                                {%- set ns.lights = ns.lights + [light_entity] -%}
+                              {%- endif -%}
+                            {%- endfor -%}
+                            {{ ns.lights if ns.lights | count > 0 else [restore_lights | random] }}
+                          {%- else -%}
+                            {{ [effect_light_group] }}
                           {%- endif -%}
-                        {%- endfor -%}
-                        {{ ns.lights if ns.lights | count > 0 else [restore_lights | random] }}
-                      {%- else -%}
-                        {{ [effect_light_group] }}
-                      {%- endif -%}
-                - alias: Flicker random member lights, each to its own brightness
-                  repeat:
-                    for_each: "{{ flicker_targets }}"
-                    sequence:
-                      - action: light.turn_on
-                        target:
-                          entity_id: "{{ repeat.item }}"
-                        data:
-                          brightness_pct: "{{ timing.flicker_levels | random }}"
-                          transition: 0
-                - delay:
+                    - alias: Flicker random member lights, each to its own brightness
+                      repeat:
+                        for_each: "{{ flicker_targets }}"
+                        sequence:
+                          - action: light.turn_on
+                            target:
+                              entity_id: "{{ repeat.item }}"
+                            data:
+                              brightness_pct: "{{ timing.flicker_levels | random }}"
+                              transition: 0
+                    - delay:
+                        milliseconds: >
+                          {% if per_light_flicker %}
+                            {{ range(timing.flicker_light_min, timing.flicker_light_max) | random }}
+                          {% else %}
+                            {{ range(timing.flicker_group_min, timing.flicker_group_max) | random }}
+                          {% endif %}
+
+      - alias: Repeat the scream during the jump scare
+        if:
+          - condition: template
+            value_template: "{{ selected_effect == 'jump_scare' and media_enabled and scream_sound | trim != '' }}"
+        then:
+          - alias: Wait for the lights to slam on
+            delay:
+              milliseconds: "{{ scare_blackout_ms }}"
+          - repeat:
+              while:
+                - condition: template
+                  value_template: "{{ as_timestamp(now()) < effect_end_ts }}"
+              sequence:
+                - action: media_player.play_media
+                  continue_on_error: true
+                  target:
+                    entity_id: "{{ media_player }}"
+                  data:
+                    media_content_id: "{{ scream_sound | trim }}"
+                    media_content_type: music
+                - alias: Wait 2-5 seconds, but never past the end of the effect
+                  delay:
                     milliseconds: >
-                      {% if per_light_flicker %}
-                        {{ range(timing.flicker_light_min, timing.flicker_light_max) | random }}
-                      {% else %}
-                        {{ range(timing.flicker_group_min, timing.flicker_group_max) | random }}
-                      {% endif %}
+                      {% set remaining_ms = ((effect_end_ts - as_timestamp(now())) * 1000) | int %}
+                      {{ [[range(2000, 5001) | random, remaining_ms] | min, 0] | max }}
 
   - alias: Restore lights
     action: scene.turn_on
