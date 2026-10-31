@@ -20,7 +20,8 @@ blueprint:
     - **Power failure:** the lights sputter, fade out, stay dark, then surge
       back on.
 
-    - **Heartbeat:** a pulse that speeds up during the effect.
+    - **Heartbeat:** a pulse that speeds up over the first 2 minutes, in
+      time with the heartbeat sound.
 
     - **Haunted flicker:** irregular brightness changes with short blackouts.
       With member lights selected, each light flickers on its own using direct
@@ -41,10 +42,14 @@ blueprint:
     before any effect repeats.
 
 
-    **Version:** 1.4.0
+    **Version:** 1.5.0
 
 
     **Changelog:**
+
+    - 1.5.0: Heartbeat lights now follow the same beat schedule as the
+      heartbeat sound (2.5 s to 1.5 s over the first 2 minutes) and are timed
+      against the clock so they do not drift. Re-upload heartbeat.wav.
 
     - 1.4.0: The jump scare scream now repeats every 2-5 seconds for the
       whole effect instead of playing once.
@@ -280,8 +285,9 @@ blueprint:
         heartbeat_sound:
           name: Heartbeat sound
           description: >
-            Played once when the heartbeat effect starts. Use a track at least
-            as long as the effect. Clear it to disable.
+            Played once when the heartbeat effect starts. The lights follow the
+            beat schedule of the bundled track (first beat after 2 s, 2.5 s to
+            1.5 s between beats over 2 minutes). Clear it to disable.
           default: 'media-source://media_source/local/halloween/heartbeat.wav'
           selector:
             text:
@@ -394,6 +400,7 @@ variables:
   per_light_flicker: "{{ restore_lights | count > 0 }}"
   media_enabled: "{{ media_player | trim != '' }}"
   snapshot_entities: "{{ restore_lights if restore_lights | count > 0 else [effect_light_group] }}"
+  heartbeat_ramp_s: 120
   snapshot_scene_id: "{{ this.entity_id | replace('automation.', '') ~ '_effect_snapshot' }}"
 
 actions:
@@ -420,7 +427,6 @@ actions:
         {%- endif -%}
       selected_effect: "{{ candidate_effects | random }}"
       effect_history: "{{ ([selected_effect] if new_round else played_effects + [selected_effect]) | join(',') }}"
-      effect_start_ts: "{{ as_timestamp(now()) }}"
       effect_end_ts: "{{ as_timestamp(now()) + effect_duration_minutes * 60 }}"
       # Shared by the light intro and the scream loop so the first scream hits with the lights
       scare_blackout_ms: "{{ range(2000, 3500) | random }}"
@@ -479,6 +485,10 @@ actions:
             data:
               media_content_id: "{{ start_sound }}"
               media_content_type: music
+
+  - variables:
+      # The heartbeat track starts with 2 s of silence before the first beat
+      heartbeat_start_ts: "{{ as_timestamp(now()) + 2 }}"
 
   - alias: Prepare lights for the effect
     choose:
@@ -624,11 +634,21 @@ actions:
                       value_template: "{{ selected_effect == 'heartbeat' }}"
                   sequence:
                     - variables:
-                        # Beat period shrinks from 2.5 s to 1.5 s as the effect progresses
-                        effect_progress: >
-                          {% set elapsed = as_timestamp(now()) - effect_start_ts %}
-                          {{ [elapsed / (effect_duration_minutes * 60), 1] | min }}
-                        beat_period_ms: "{{ (2500 - 1000 * effect_progress) | int }}"
+                        # Same schedule as heartbeat.wav: the period shrinks from 2.5 s to
+                        # 1.5 s over the first 2 minutes, measured at the previous beat
+                        beat_offset_s: >
+                          {%- set ns = namespace(t=0.0) -%}
+                          {%- for _ in range(repeat.index - 1) -%}
+                            {%- set ns.t = ns.t + 2.5 - [ns.t / heartbeat_ramp_s, 1] | min -%}
+                          {%- endfor -%}
+                          {{ ns.t }}
+                        beat_period_s: "{{ 2.5 - [beat_offset_s / heartbeat_ramp_s, 1] | min }}"
+                    - alias: Wait for the beat on the shared timeline (avoids drift)
+                      delay:
+                        milliseconds: >
+                          {% set wait_ms = ((heartbeat_start_ts + beat_offset_s - as_timestamp(now())) * 1000) | int %}
+                          {% set remaining_ms = ((effect_end_ts - as_timestamp(now())) * 1000) | int %}
+                          {{ [[wait_ms, remaining_ms] | min, 0] | max }}
                     - alias: Beat
                       action: light.turn_on
                       target:
@@ -644,9 +664,7 @@ actions:
                         entity_id: "{{ effect_light_group }}"
                       data:
                         brightness_pct: 5
-                        transition: "{{ (beat_period_ms * 0.6 / 1000) | round(1) }}"
-                    - delay:
-                        milliseconds: "{{ beat_period_ms - 200 }}"
+                        transition: "{{ (beat_period_s * 0.6) | round(1) }}"
 
               # Haunted flicker, also used after the jump scare intro
               default:

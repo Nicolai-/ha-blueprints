@@ -15,6 +15,8 @@ ONE_SHOT_RATE = 22050
 LONG_TRACK_RATE = 16000
 LONG_TRACK_SECONDS = 300
 MAINS_HZ = 50
+HEARTBEAT_LEAD_SECONDS = 2.0
+HEARTBEAT_RAMP_SECONDS = 120
 
 random.seed(31)
 
@@ -119,9 +121,12 @@ def scream():
 
 
 def heartbeat_track():
-    """Lub-dub heartbeat that speeds up from 2.5 s to 1.5 s per beat over 5 minutes.
+    """Lub-dub heartbeat that speeds up from 2.5 s to 1.5 s per beat over the
+    first 2 minutes, then stays at 1.5 s for the rest of the 5 minute track.
 
-    Matches the blueprint's heartbeat effect, which starts after a 2 s blackout.
+    Uses the same beat schedule as the blueprint's heartbeat effect: the first
+    beat is 2 s after playback starts and each beat is one period after the
+    previous one, with the period taken at the previous beat.
     """
     rate = LONG_TRACK_RATE
     count = rate * LONG_TRACK_SECONDS
@@ -134,9 +139,9 @@ def heartbeat_track():
                 for i in range(samples)]
 
     lub, dub = thump(55, 0.18, 1.0), thump(68, 0.14, 0.7)
-    t = 2.0
+    t = HEARTBEAT_LEAD_SECONDS
     while t < LONG_TRACK_SECONDS - 1:
-        progress = min(1.0, (t - 2.0) / LONG_TRACK_SECONDS)
+        progress = min(1.0, (t - HEARTBEAT_LEAD_SECONDS) / HEARTBEAT_RAMP_SECONDS)
         period = 2.5 - 1.0 * progress
         start = int(t * rate)
         add(out, lub, start)
