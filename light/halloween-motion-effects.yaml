@@ -35,13 +35,19 @@ blueprint:
 
 
     When several effects are selected, a random one is picked on every motion
-    trigger. Select a single effect to lock it.
+    trigger. Select a single effect to lock it. Add a text helper as effect
+    history to shuffle instead: every effect then plays once, in random order,
+    before any effect repeats.
 
 
-    **Version:** 1.2.0
+    **Version:** 1.3.0
 
 
     **Changelog:**
+
+    - 1.3.0: Optional shuffle mode. With an input_text helper selected as
+      effect history, every enabled effect plays once before any repeats,
+      and a new round never starts with the effect that just played.
 
     - 1.2.0: Haunted flicker now changes several member lights per step
       (about half of them on aggressive) instead of one, so every light
@@ -150,7 +156,8 @@ blueprint:
         enabled_effects:
           name: Effects
           description: >
-            Effects to choose from. A random one is picked on every trigger.
+            Effects to choose from. A random one is picked on every trigger, or
+            the next one in the shuffle when an effect history helper is set.
             Select one effect to always use it.
           default:
             - lightning
@@ -172,6 +179,20 @@ blueprint:
                   value: heartbeat
                 - label: Haunted flicker
                   value: flicker
+        effect_history_helper:
+          name: Effect history (shuffle)
+          description: >
+            Optional Text helper (input_text) used to remember which effects
+            have played. When set, every enabled effect plays once in random
+            order before any effect repeats. Create it under Settings > Devices
+            & services > Helpers > Text; the default maximum length of 100 is
+            enough. Leave empty for a fully random pick on every trigger.
+          default: ''
+          selector:
+            entity:
+              filter:
+                - domain: input_text
+              multiple: false
         effect_duration_minutes:
           name: Effect duration
           description: How long the effect runs before the lights are restored.
@@ -302,6 +323,8 @@ variables:
   effect_light_group: !input effect_light_group
   restore_lights: !input restore_lights
   enabled_effects: !input enabled_effects
+  effect_history_helper: !input effect_history_helper
+  shuffle_enabled: "{{ effect_history_helper | trim != '' }}"
   effect_duration_minutes: !input effect_duration_minutes
   media_player: !input media_player
   media_volume: !input media_volume
@@ -369,7 +392,28 @@ variables:
 
 actions:
   - variables:
-      selected_effect: "{{ enabled_effects | random }}"
+      # Shuffle bag: effects already played this round, in order
+      played_effects: >
+        {%- if shuffle_enabled -%}
+          {{ states(effect_history_helper).split(',')
+            | map('trim')
+            | select('in', enabled_effects)
+            | list }}
+        {%- else -%}
+          {{ [] }}
+        {%- endif -%}
+      new_round: "{{ enabled_effects | reject('in', played_effects) | list | count == 0 }}"
+      candidate_effects: >
+        {%- if not new_round -%}
+          {{ enabled_effects | reject('in', played_effects) | list }}
+        {%- elif enabled_effects | count > 1 -%}
+          {#- Do not start a new round with the effect that just played -#}
+          {{ enabled_effects | reject('eq', played_effects | last) | list }}
+        {%- else -%}
+          {{ enabled_effects }}
+        {%- endif -%}
+      selected_effect: "{{ candidate_effects | random }}"
+      effect_history: "{{ ([selected_effect] if new_round else played_effects + [selected_effect]) | join(',') }}"
       effect_start_ts: "{{ as_timestamp(now()) }}"
       effect_end_ts: "{{ as_timestamp(now()) + effect_duration_minutes * 60 }}"
       original_volume: "{{ state_attr(media_player, 'volume_level') if media_enabled else none }}"
@@ -385,6 +429,18 @@ actions:
       name: Halloween Motion Effects
       message: "Starting {{ selected_effect | replace('_', ' ') }} effect for {{ effect_duration_minutes }} minutes"
       entity_id: "{{ effect_light_group }}"
+
+  - alias: Remember the selected effect for the shuffle
+    if:
+      - condition: template
+        value_template: "{{ shuffle_enabled }}"
+    then:
+      - action: input_text.set_value
+        continue_on_error: true
+        target:
+          entity_id: "{{ effect_history_helper }}"
+        data:
+          value: "{{ effect_history }}"
 
   - alias: Snapshot lights before the effect
     action: scene.create
