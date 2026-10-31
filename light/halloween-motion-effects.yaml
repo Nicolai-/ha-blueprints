@@ -1,0 +1,566 @@
+blueprint:
+  name: Halloween Motion Effects
+  description: >
+    Run a spooky light effect on non-RGB (dimmable) lights when motion is
+    detected on a chosen date and within a time window. Effects are designed
+    for a Zigbee2MQTT group: every command is sent once to the group, and the
+    command rate is kept low so group broadcasts do not flood the Zigbee mesh.
+    The member lights are snapshotted before the effect and restored afterwards.
+
+
+    **Effects:**
+
+    - **Lightning storm:** darkness with random bursts of 1-3 flashes, followed
+      by thunder on the speaker.
+
+    - **Jump scare:** silent blackout, then all lights slam to full brightness
+      together with a scream, followed by haunted flicker.
+
+    - **Power failure:** the lights sputter, fade out, stay dark, then surge
+      back on.
+
+    - **Heartbeat:** a pulse that speeds up during the effect.
+
+    - **Haunted flicker:** slow, irregular brightness changes with short
+      blackouts.
+
+
+    A matching sound pack is available in light/sounds/halloween. Upload the
+    files to /media/halloween in Home Assistant to use the default sounds.
+
+
+    When several effects are selected, a random one is picked on every motion
+    trigger. Select a single effect to lock it.
+
+
+    **Version:** 1.0.0
+
+
+    **Changelog:**
+
+    - 1.0.0: Initial release with lightning, jump scare, power failure,
+      heartbeat and flicker effects, optional sounds and state restore.
+  domain: automation
+  author: Nicolai-
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    trigger_section:
+      name: Trigger & Schedule
+      icon: mdi:calendar-clock
+      input:
+        motion_sensors:
+          name: (Required) Motion Sensors
+          description: Motion sensors that start the effect when they detect motion.
+          selector:
+            entity:
+              filter:
+                - domain: binary_sensor
+                  device_class:
+                    - motion
+                    - occupancy
+                    - presence
+              multiple: true
+        event_date:
+          name: (Required) Date
+          description: The date on which the effect is active.
+          default: '2026-10-31'
+          selector:
+            date:
+        repeat_yearly:
+          name: Repeat every year
+          description: Only compare month and day, so the date matches every year.
+          default: true
+          selector:
+            boolean:
+        start_time:
+          name: (Required) Start time
+          description: Effects can start from this time.
+          default: '17:00:00'
+          selector:
+            time:
+        end_time:
+          name: (Required) End time
+          description: >
+            Effects can no longer start after this time. A window crossing
+            midnight is supported, but only the part on the selected date is
+            active.
+          default: '23:00:00'
+          selector:
+            time:
+        cooldown_minutes:
+          name: Cooldown
+          description: Minimum pause after an effect finishes before motion can start a new one.
+          default: 1
+          selector:
+            number:
+              min: 0
+              max: 30
+              step: 1
+              unit_of_measurement: minutes
+              mode: slider
+
+    light_section:
+      name: Lights
+      icon: mdi:lightbulb-group
+      input:
+        effect_light_group:
+          name: (Required) Zigbee2MQTT light group
+          description: >
+            Light group created in Zigbee2MQTT. All effect commands are sent to
+            this group so the lights react in sync with a single Zigbee command.
+          selector:
+            entity:
+              filter:
+                - domain: light
+                  integration: mqtt
+              multiple: false
+        restore_lights:
+          name: Member lights
+          description: >
+            The individual lights in the group. They are snapshotted before the
+            effect and restored afterwards. Zigbee2MQTT group state is only
+            assumed, so restoring the members is more reliable. When empty, the
+            group itself is restored.
+          default: []
+          selector:
+            entity:
+              filter:
+                - domain: light
+              multiple: true
+
+    effect_section:
+      name: Effects
+      icon: mdi:ghost
+      input:
+        enabled_effects:
+          name: Effects
+          description: >
+            Effects to choose from. A random one is picked on every trigger.
+            Select one effect to always use it.
+          default:
+            - lightning
+            - jump_scare
+            - power_failure
+            - heartbeat
+            - flicker
+          selector:
+            select:
+              multiple: true
+              options:
+                - label: Lightning storm
+                  value: lightning
+                - label: Jump scare
+                  value: jump_scare
+                - label: Power failure
+                  value: power_failure
+                - label: Heartbeat
+                  value: heartbeat
+                - label: Haunted flicker
+                  value: flicker
+        effect_duration_minutes:
+          name: Effect duration
+          description: How long the effect runs before the lights are restored.
+          default: 5
+          selector:
+            number:
+              min: 1
+              max: 30
+              step: 1
+              unit_of_measurement: minutes
+              mode: slider
+
+    sound_section:
+      name: Sound (optional)
+      icon: mdi:speaker
+      collapsed: true
+      input:
+        media_player:
+          name: Speaker / Media player
+          description: >
+            Optional speaker for effect sounds. Leave empty to run the effects
+            without sound. Anything playing on the speaker is stopped when the
+            effect ends.
+          default: ''
+          selector:
+            entity:
+              filter:
+                - domain: media_player
+              multiple: false
+        media_volume:
+          name: Volume
+          description: Speaker volume during the effect. The previous volume is restored afterwards.
+          default: 60
+          selector:
+            number:
+              min: 5
+              max: 100
+              step: 5
+              unit_of_measurement: '%'
+              mode: slider
+        thunder_sound:
+          name: Thunder sound
+          description: >
+            Played after each lightning burst. Use a URL or a media source path.
+            The default matches the bundled sound pack uploaded to
+            /media/halloween in Home Assistant. Clear it to disable.
+          default: 'media-source://media_source/local/halloween/thunder.wav'
+          selector:
+            text:
+        scream_sound:
+          name: Scream sound
+          description: Played when the jump scare lights slam on. Clear it to disable.
+          default: 'media-source://media_source/local/halloween/scream.wav'
+          selector:
+            text:
+        power_failure_sound:
+          name: Power failure sound
+          description: Played once when the power failure effect starts. Clear it to disable.
+          default: 'media-source://media_source/local/halloween/power_failure.wav'
+          selector:
+            text:
+        heartbeat_sound:
+          name: Heartbeat sound
+          description: >
+            Played once when the heartbeat effect starts. Use a track at least
+            as long as the effect. Clear it to disable.
+          default: 'media-source://media_source/local/halloween/heartbeat.wav'
+          selector:
+            text:
+        flicker_sound:
+          name: Flicker sound
+          description: >
+            Played once when the haunted flicker effect starts, e.g. electrical
+            buzzing. Clear it to disable.
+          default: 'media-source://media_source/local/halloween/electrical_buzz.wav'
+          selector:
+            text:
+  source_url: https://github.com/Nicolai-/ha-blueprints/blob/main/light/halloween-motion-effects.yaml
+
+triggers:
+  - trigger: state
+    entity_id: !input motion_sensors
+    to: 'on'
+
+conditions:
+  - alias: Selected date
+    condition: template
+    value_template: >
+      {% if repeat_yearly %}
+        {{ now().strftime('%m-%d') == (event_date | string)[5:10] }}
+      {% else %}
+        {{ now().date() | string == event_date | string }}
+      {% endif %}
+  - alias: Within time window
+    condition: time
+    after: !input start_time
+    before: !input end_time
+  - alias: At least one effect enabled
+    condition: template
+    value_template: "{{ enabled_effects | count > 0 }}"
+  - alias: Cooldown since last effect has passed
+    condition: template
+    value_template: >
+      {% set last_run = as_timestamp(this.attributes.last_triggered, 0) %}
+      {{ as_timestamp(now()) - last_run > (effect_duration_minutes + cooldown_minutes) * 60 }}
+
+variables:
+  event_date: !input event_date
+  repeat_yearly: !input repeat_yearly
+  cooldown_minutes: !input cooldown_minutes
+  effect_light_group: !input effect_light_group
+  restore_lights: !input restore_lights
+  enabled_effects: !input enabled_effects
+  effect_duration_minutes: !input effect_duration_minutes
+  media_player: !input media_player
+  media_volume: !input media_volume
+  thunder_sound: !input thunder_sound
+  scream_sound: !input scream_sound
+  power_failure_sound: !input power_failure_sound
+  heartbeat_sound: !input heartbeat_sound
+  flicker_sound: !input flicker_sound
+  media_enabled: "{{ media_player | trim != '' }}"
+  snapshot_entities: "{{ restore_lights if restore_lights | count > 0 else [effect_light_group] }}"
+  snapshot_scene_id: "{{ this.entity_id | replace('automation.', '') ~ '_effect_snapshot' }}"
+
+actions:
+  - variables:
+      selected_effect: "{{ enabled_effects | random }}"
+      effect_start_ts: "{{ as_timestamp(now()) }}"
+      effect_end_ts: "{{ as_timestamp(now()) + effect_duration_minutes * 60 }}"
+      original_volume: "{{ state_attr(media_player, 'volume_level') if media_enabled else none }}"
+      start_sound: >
+        {{ {
+          'power_failure': power_failure_sound,
+          'heartbeat': heartbeat_sound,
+          'flicker': flicker_sound
+        }.get(selected_effect, '') | trim }}
+
+  - action: logbook.log
+    data:
+      name: Halloween Motion Effects
+      message: "Starting {{ selected_effect | replace('_', ' ') }} effect for {{ effect_duration_minutes }} minutes"
+      entity_id: "{{ effect_light_group }}"
+
+  - alias: Snapshot lights before the effect
+    action: scene.create
+    data:
+      scene_id: "{{ snapshot_scene_id }}"
+      snapshot_entities: "{{ snapshot_entities }}"
+
+  - alias: Prepare speaker
+    if:
+      - condition: template
+        value_template: "{{ media_enabled }}"
+    then:
+      - action: media_player.volume_set
+        continue_on_error: true
+        target:
+          entity_id: "{{ media_player }}"
+        data:
+          volume_level: "{{ media_volume / 100 }}"
+      - alias: Play the effect start sound
+        if:
+          - condition: template
+            value_template: "{{ start_sound != '' }}"
+        then:
+          - action: media_player.play_media
+            continue_on_error: true
+            target:
+              entity_id: "{{ media_player }}"
+            data:
+              media_content_id: "{{ start_sound }}"
+              media_content_type: music
+
+  - alias: Prepare lights for the effect
+    choose:
+      - alias: Lightning and heartbeat start from darkness
+        conditions:
+          - condition: template
+            value_template: "{{ selected_effect in ['lightning', 'heartbeat'] }}"
+        sequence:
+          - action: light.turn_off
+            target:
+              entity_id: "{{ effect_light_group }}"
+            data:
+              transition: 0
+          - delay:
+              seconds: 2
+
+  - alias: Run the effect until the duration has passed
+    repeat:
+      while:
+        - condition: template
+          value_template: "{{ as_timestamp(now()) < effect_end_ts }}"
+      sequence:
+        - choose:
+            - alias: Lightning storm
+              conditions:
+                - condition: template
+                  value_template: "{{ selected_effect == 'lightning' }}"
+              sequence:
+                - alias: Wait for the next strike
+                  delay:
+                    milliseconds: "{{ range(5000, 11000) | random }}"
+                - alias: Flash burst
+                  repeat:
+                    count: "{{ range(1, 4) | random }}"
+                    sequence:
+                      - action: light.turn_on
+                        target:
+                          entity_id: "{{ effect_light_group }}"
+                        data:
+                          brightness_pct: 100
+                          transition: 0
+                      - delay:
+                          milliseconds: "{{ range(80, 200) | random }}"
+                      - action: light.turn_off
+                        target:
+                          entity_id: "{{ effect_light_group }}"
+                        data:
+                          transition: 0
+                      - delay:
+                          milliseconds: "{{ range(150, 400) | random }}"
+                - alias: Thunder follows the flash
+                  if:
+                    - condition: template
+                      value_template: "{{ media_enabled and thunder_sound | trim != '' }}"
+                  then:
+                    - delay:
+                        milliseconds: "{{ range(300, 1500) | random }}"
+                    - action: media_player.play_media
+                      continue_on_error: true
+                      target:
+                        entity_id: "{{ media_player }}"
+                      data:
+                        media_content_id: "{{ thunder_sound | trim }}"
+                        media_content_type: music
+
+            - alias: Jump scare intro (first round only)
+              conditions:
+                - condition: template
+                  value_template: "{{ selected_effect == 'jump_scare' and repeat.index == 1 }}"
+              sequence:
+                - alias: Silent blackout
+                  action: light.turn_off
+                  target:
+                    entity_id: "{{ effect_light_group }}"
+                  data:
+                    transition: 0
+                - delay:
+                    milliseconds: "{{ range(2000, 3500) | random }}"
+                - alias: Scream
+                  if:
+                    - condition: template
+                      value_template: "{{ media_enabled and scream_sound | trim != '' }}"
+                  then:
+                    - action: media_player.play_media
+                      continue_on_error: true
+                      target:
+                        entity_id: "{{ media_player }}"
+                      data:
+                        media_content_id: "{{ scream_sound | trim }}"
+                        media_content_type: music
+                - alias: Slam the lights on
+                  action: light.turn_on
+                  target:
+                    entity_id: "{{ effect_light_group }}"
+                  data:
+                    brightness_pct: 100
+                    transition: 0
+                - delay:
+                    seconds: 3
+
+            - alias: Power failure
+              conditions:
+                - condition: template
+                  value_template: "{{ selected_effect == 'power_failure' }}"
+              sequence:
+                - alias: Sputter
+                  repeat:
+                    count: 3
+                    sequence:
+                      - action: light.turn_on
+                        target:
+                          entity_id: "{{ effect_light_group }}"
+                        data:
+                          brightness_pct: "{{ range(15, 90) | random }}"
+                          transition: 0
+                      - delay:
+                          milliseconds: "{{ range(500, 900) | random }}"
+                - alias: Fade out
+                  action: light.turn_on
+                  target:
+                    entity_id: "{{ effect_light_group }}"
+                  data:
+                    brightness_pct: 3
+                    transition: 3
+                - delay:
+                    seconds: 3
+                - alias: Blackout
+                  action: light.turn_off
+                  target:
+                    entity_id: "{{ effect_light_group }}"
+                  data:
+                    transition: 0
+                - delay:
+                    milliseconds: "{{ range(3000, 6000) | random }}"
+                - alias: Power surges back
+                  action: light.turn_on
+                  target:
+                    entity_id: "{{ effect_light_group }}"
+                  data:
+                    brightness_pct: 100
+                    transition: 0
+                - delay:
+                    milliseconds: "{{ range(5000, 10000) | random }}"
+
+            - alias: Heartbeat
+              conditions:
+                - condition: template
+                  value_template: "{{ selected_effect == 'heartbeat' }}"
+              sequence:
+                - variables:
+                    # Beat period shrinks from 2.5 s to 1.5 s as the effect progresses
+                    effect_progress: >
+                      {% set elapsed = as_timestamp(now()) - effect_start_ts %}
+                      {{ [elapsed / (effect_duration_minutes * 60), 1] | min }}
+                    beat_period_ms: "{{ (2500 - 1000 * effect_progress) | int }}"
+                - alias: Beat
+                  action: light.turn_on
+                  target:
+                    entity_id: "{{ effect_light_group }}"
+                  data:
+                    brightness_pct: 100
+                    transition: 0
+                - delay:
+                    milliseconds: 200
+                - alias: Fade between beats
+                  action: light.turn_on
+                  target:
+                    entity_id: "{{ effect_light_group }}"
+                  data:
+                    brightness_pct: 5
+                    transition: "{{ (beat_period_ms * 0.6 / 1000) | round(1) }}"
+                - delay:
+                    milliseconds: "{{ beat_period_ms - 200 }}"
+
+          # Haunted flicker, also used after the jump scare intro
+          default:
+            - if:
+                - alias: Occasional short blackout
+                  condition: template
+                  value_template: "{{ range(0, 100) | random < 15 }}"
+              then:
+                - action: light.turn_off
+                  target:
+                    entity_id: "{{ effect_light_group }}"
+                  data:
+                    transition: 0
+                - delay:
+                    milliseconds: "{{ range(1000, 2500) | random }}"
+              else:
+                - action: light.turn_on
+                  target:
+                    entity_id: "{{ effect_light_group }}"
+                  data:
+                    brightness_pct: "{{ range(5, 101) | random }}"
+                    transition: "{{ range(0, 4) | random / 10 }}"
+                - delay:
+                    milliseconds: "{{ range(800, 1700) | random }}"
+
+  - alias: Restore lights
+    action: scene.turn_on
+    target:
+      entity_id: "{{ 'scene.' ~ snapshot_scene_id }}"
+    data:
+      transition: 1
+
+  - alias: Restore speaker
+    if:
+      - condition: template
+        value_template: "{{ media_enabled }}"
+    then:
+      - action: media_player.media_stop
+        continue_on_error: true
+        target:
+          entity_id: "{{ media_player }}"
+      - if:
+          - condition: template
+            value_template: "{{ original_volume is number }}"
+        then:
+          - action: media_player.volume_set
+            continue_on_error: true
+            target:
+              entity_id: "{{ media_player }}"
+            data:
+              volume_level: "{{ original_volume }}"
+
+  - action: logbook.log
+    data:
+      name: Halloween Motion Effects
+      message: "Finished {{ selected_effect | replace('_', ' ') }} effect, lights restored"
+      entity_id: "{{ effect_light_group }}"
+
+mode: single
+max_exceeded: silent
