@@ -42,10 +42,13 @@ blueprint:
     before any effect repeats.
 
 
-    **Version:** 1.7.0
+    **Version:** 1.8.0
 
 
     **Changelog:**
+
+    - 1.8.0: New "Max lights per flicker step" input to override the
+      flicker cap. 0 keeps following the intensity.
 
     - 1.7.0: Haunted flicker changes at most 4 member lights per step on
       aggressive (3 on normal, 1 on calm), so large groups no longer flood
@@ -237,6 +240,22 @@ blueprint:
                   value: normal
                 - label: Aggressive
                   value: aggressive
+        flicker_max_lights_override:
+          name: Max lights per flicker step
+          description: >
+            Upper limit for how many member lights change at once during
+            haunted flicker. Higher values flicker each light more often but
+            send more Zigbee commands; above 4-5 lights per step large groups
+            may start to lag. 0 follows the intensity (calm 1, normal 3,
+            aggressive 4). The intensity still decides roughly how many lights
+            change, this only sets the maximum.
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 10
+              step: 1
+              mode: slider
 
     sound_section:
       name: Sound (optional)
@@ -377,11 +396,13 @@ variables:
   heartbeat_sound: !input heartbeat_sound
   flicker_sound: !input flicker_sound
   effect_intensity: !input effect_intensity
+  flicker_max_lights_override: !input flicker_max_lights_override
   # Delays in milliseconds. Per-light delays apply to direct (unicast) commands,
   # group delays stay slower because group commands are Zigbee broadcasts.
   # flicker_share is the chance (%) that each member light changes per flicker
   # step; at least one light always changes and never more than
-  # flicker_max_lights, which keeps the Zigbee load flat for large groups.
+  # flicker_max_lights (or the user override), which keeps the Zigbee load
+  # flat for large groups.
   effect_timings:
     calm:
       flicker_light_min: 900
@@ -432,6 +453,10 @@ variables:
       flashes_min: 2
       flashes_max: 4
   timing: "{{ effect_timings[effect_intensity] }}"
+  flicker_light_cap: >
+    {{ flicker_max_lights_override | int
+       if flicker_max_lights_override | int > 0
+       else timing.flicker_max_lights }}
   per_light_flicker: "{{ restore_lights | count > 0 }}"
   media_enabled: "{{ media_player | trim != '' }}"
   snapshot_entities: "{{ restore_lights if restore_lights | count > 0 else [effect_light_group] }}"
@@ -726,7 +751,7 @@ actions:
                                 {%- set ns.hits = ns.hits + 1 -%}
                               {%- endif -%}
                             {%- endfor -%}
-                            {%- set light_count = [[ns.hits, 1] | max, timing.flicker_max_lights] | min -%}
+                            {%- set light_count = [[ns.hits, 1] | max, flicker_light_cap] | min -%}
                             {#- Pick that many distinct random member lights -#}
                             {%- for _ in range(light_count) -%}
                               {%- set picked = ns.pool | random -%}
