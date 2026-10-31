@@ -42,10 +42,14 @@ blueprint:
     before any effect repeats.
 
 
-    **Version:** 1.6.0
+    **Version:** 1.7.0
 
 
     **Changelog:**
+
+    - 1.7.0: Haunted flicker changes at most 4 member lights per step on
+      aggressive (3 on normal, 1 on calm), so large groups no longer flood
+      the Zigbee network.
 
     - 1.6.0: The jump scare scream now repeats every 10-15 seconds by
       default, with new inputs to set the shortest and longest interval.
@@ -376,7 +380,8 @@ variables:
   # Delays in milliseconds. Per-light delays apply to direct (unicast) commands,
   # group delays stay slower because group commands are Zigbee broadcasts.
   # flicker_share is the chance (%) that each member light changes per flicker
-  # step; at least one light always changes.
+  # step; at least one light always changes and never more than
+  # flicker_max_lights, which keeps the Zigbee load flat for large groups.
   effect_timings:
     calm:
       flicker_light_min: 900
@@ -385,6 +390,7 @@ variables:
       flicker_group_max: 2200
       flicker_levels: [10, 25, 40, 55, 70, 85, 100]
       flicker_share: 0
+      flicker_max_lights: 1
       blackout_chance: 10
       sputters: 2
       sputter_min: 600
@@ -400,6 +406,7 @@ variables:
       flicker_group_max: 1700
       flicker_levels: [5, 15, 30, 50, 70, 85, 100]
       flicker_share: 30
+      flicker_max_lights: 3
       blackout_chance: 12
       sputters: 3
       sputter_min: 400
@@ -415,6 +422,7 @@ variables:
       flicker_group_max: 1000
       flicker_levels: [1, 1, 5, 10, 30, 70, 100, 100]
       flicker_share: 50
+      flicker_max_lights: 4
       blackout_chance: 5
       sputters: 6
       sputter_min: 120
@@ -711,13 +719,21 @@ actions:
                     - variables:
                         flicker_targets: >
                           {%- if per_light_flicker -%}
-                            {%- set ns = namespace(lights=[]) -%}
-                            {%- for light_entity in restore_lights -%}
+                            {#- Roll flicker_share per light to decide how many change, then cap it -#}
+                            {%- set ns = namespace(hits=0, lights=[], pool=restore_lights) -%}
+                            {%- for _ in restore_lights -%}
                               {%- if range(0, 100) | random < timing.flicker_share -%}
-                                {%- set ns.lights = ns.lights + [light_entity] -%}
+                                {%- set ns.hits = ns.hits + 1 -%}
                               {%- endif -%}
                             {%- endfor -%}
-                            {{ ns.lights if ns.lights | count > 0 else [restore_lights | random] }}
+                            {%- set light_count = [[ns.hits, 1] | max, timing.flicker_max_lights] | min -%}
+                            {#- Pick that many distinct random member lights -#}
+                            {%- for _ in range(light_count) -%}
+                              {%- set picked = ns.pool | random -%}
+                              {%- set ns.lights = ns.lights + [picked] -%}
+                              {%- set ns.pool = ns.pool | reject('eq', picked) | list -%}
+                            {%- endfor -%}
+                            {{ ns.lights }}
                           {%- else -%}
                             {{ [effect_light_group] }}
                           {%- endif -%}
