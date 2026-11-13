@@ -18,6 +18,9 @@ blueprint:
       - The optional humidity sensor can be left empty. Before, the empty
         value ended up in a state trigger and the automation failed to
         load.
+      - Triggers are queued instead of restarting the run in progress, so
+        plus/minus presses reliably show the new setpoint on the W100 and
+        start the feedback timer.
 
     - 1.0.0: Initial release with external temperature/humidity display sync
       and plus/minus setpoint control. Center press restores the external
@@ -392,4 +395,6 @@ actions:
         data:
           value: "{{ external_humidity_value | float | round(0) }}"
 
-mode: restart
+mode: queued
+max: 10
+max_exceeded: silent
