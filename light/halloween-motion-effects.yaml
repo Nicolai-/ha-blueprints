@@ -42,10 +42,14 @@ blueprint:
     before any effect repeats.
 
 
-    **Version:** 1.8.0
+    **Version:** 1.8.1
 
 
     **Changelog:**
+
+    - 1.8.1: Lightning storm and power failure no longer run up to about
+      25 seconds past the effect duration. Their long pauses stop at the
+      end of the effect.
 
     - 1.8.0: New "Max lights per flicker step" input to override the
       flicker cap. 0 keeps following the intensity.
@@ -579,9 +583,14 @@ actions:
                     - condition: template
                       value_template: "{{ selected_effect == 'lightning' }}"
                   sequence:
-                    - alias: Wait for the next strike
+                    - alias: Wait for the next strike, but never past the end of the effect
                       delay:
-                        milliseconds: "{{ range(timing.strike_min, timing.strike_max) | random }}"
+                        milliseconds: >
+                          {% set remaining_ms = ((effect_end_ts - as_timestamp(now())) * 1000) | int %}
+                          {{ [[range(timing.strike_min, timing.strike_max) | random, remaining_ms] | min, 0] | max }}
+                    - alias: Stop when the effect time is up
+                      condition: template
+                      value_template: "{{ as_timestamp(now()) < effect_end_ts }}"
                     - alias: Flash burst
                       repeat:
                         count: "{{ range(timing.flashes_min, timing.flashes_max + 1) | random }}"
@@ -677,7 +686,12 @@ actions:
                       data:
                         transition: 0
                     - delay:
-                        milliseconds: "{{ range(3000, 6000) | random }}"
+                        milliseconds: >
+                          {% set remaining_ms = ((effect_end_ts - as_timestamp(now())) * 1000) | int %}
+                          {{ [[range(3000, 6000) | random, remaining_ms] | min, 0] | max }}
+                    - alias: Stop when the effect time is up (the restore turns the lights back on)
+                      condition: template
+                      value_template: "{{ as_timestamp(now()) < effect_end_ts }}"
                     - alias: Power surges back
                       action: light.turn_on
                       target:
@@ -686,7 +700,9 @@ actions:
                         brightness_pct: 100
                         transition: 0
                     - delay:
-                        milliseconds: "{{ range(5000, 10000) | random }}"
+                        milliseconds: >
+                          {% set remaining_ms = ((effect_end_ts - as_timestamp(now())) * 1000) | int %}
+                          {{ [[range(5000, 10000) | random, remaining_ms] | min, 0] | max }}
 
                 - alias: Heartbeat
                   conditions:
