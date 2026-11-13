@@ -16,6 +16,7 @@ blueprint:
       - Uses the actions syntax and requires Home Assistant 2024.10.0 or newer.
       - Clearer description of the lux sensor input.
       - No "Already running" warnings in the log when triggers overlap.
+      - Fixed a YAML error that stopped the blueprint from loading.
 
     - 1.0.1: Fixed a type issue and re-check the lux level every 10 minutes.
 
@@ -132,7 +133,7 @@ actions:
     current_lux_level: "{{ states(lux_sensor_entity) | float(0) }}"
 - choose:
   - alias: Turn on when below threshold
-        conditions: "{{ current_lux_level < lux_threshold_level | float }}"
+    conditions: "{{ current_lux_level < lux_threshold_level | float }}"
     sequence:
     - action: light.turn_on
       target:
