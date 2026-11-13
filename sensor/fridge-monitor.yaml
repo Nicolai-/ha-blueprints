@@ -20,6 +20,7 @@ blueprint:
         recovery notifications are no longer lost, and speakers are no
         longer left at the alert volume.
       - Description paragraphs render as separate paragraphs in the UI.
+      - All speakers announce at the same time instead of one after another.
 
     - 1.3.0: Added support for multiple TTS speakers
 
@@ -221,6 +222,8 @@ variables:
   temperature_sensor_entity: !input temperature_sensor_entity
   tts_engine_entity: !input tts_engine_entity
   speaker_entity: !input speaker_entity
+  # Automations created before 1.3.0 store a single speaker as a string
+  speakers: "{{ [speaker_entity] if speaker_entity is string else speaker_entity | list }}"
   door_tts_message: !input door_tts_message
   temperature_tts_message: !input temperature_tts_message
   door_recovery_message: !input door_recovery_message
@@ -291,34 +294,38 @@ actions:
                   entity_id: !input door_sensor_entity
                   state: 'on'
               sequence:
-                - repeat:
-                    for_each: "{{ speaker_entity }}"
+                - variables:
+                    previous_volumes: >-
+                      {%- set ns = namespace(volumes=[]) -%}
+                      {%- for speaker in speakers -%}
+                        {%- set ns.volumes = ns.volumes + [state_attr(speaker, 'volume_level')] -%}
+                      {%- endfor -%}
+                      {{ ns.volumes }}
+                - action: media_player.volume_set
+                  target:
+                    entity_id: "{{ speakers }}"
+                  data:
+                    volume_level: "{{ tts_volume_level_normalized }}"
+                - action: tts.speak
+                  target:
+                    entity_id: !input tts_engine_entity
+                  data:
+                    media_player_entity_id: "{{ speakers }}"
+                    message: "{{ door_tts_message }}"
+                    cache: true
+                - delay:
+                    seconds: !input tts_volume_restore_delay
+                - alias: Restore the previous volume on each speaker
+                  repeat:
+                    for_each: "{{ range(speakers | count) | list }}"
                     sequence:
-                      - variables:
-                          current_speaker: "{{ repeat.item }}"
-                          previous_volume_level: "{{ state_attr(current_speaker, 'volume_level') }}"
-                      - action: media_player.volume_set
-                        target:
-                          entity_id: "{{ current_speaker }}"
-                        data:
-                          volume_level: "{{ tts_volume_level_normalized }}"
-                      - action: tts.speak
-                        target:
-                          entity_id: !input tts_engine_entity
-                        data:
-                          media_player_entity_id: "{{ current_speaker }}"
-                          message: "{{ door_tts_message }}"
-                          cache: true
-                      - delay:
-                          seconds: !input tts_volume_restore_delay
-                      - choose:
-                          - conditions: "{{ previous_volume_level != none }}"
-                            sequence:
-                              - action: media_player.volume_set
-                                target:
-                                  entity_id: "{{ current_speaker }}"
-                                data:
-                                  volume_level: "{{ previous_volume_level }}"
+                      - if: "{{ previous_volumes[repeat.item] is number }}"
+                        then:
+                          - action: media_player.volume_set
+                            target:
+                              entity_id: "{{ speakers[repeat.item] }}"
+                            data:
+                              volume_level: "{{ previous_volumes[repeat.item] }}"
                 - delay:
                     seconds: !input tts_repeat_interval
       - alias: Temperature has stayed above threshold
@@ -345,34 +352,38 @@ actions:
                   entity_id: !input temperature_sensor_entity
                   above: !input temperature_threshold
               sequence:
-                - repeat:
-                    for_each: "{{ speaker_entity }}"
+                - variables:
+                    previous_volumes: >-
+                      {%- set ns = namespace(volumes=[]) -%}
+                      {%- for speaker in speakers -%}
+                        {%- set ns.volumes = ns.volumes + [state_attr(speaker, 'volume_level')] -%}
+                      {%- endfor -%}
+                      {{ ns.volumes }}
+                - action: media_player.volume_set
+                  target:
+                    entity_id: "{{ speakers }}"
+                  data:
+                    volume_level: "{{ tts_volume_level_normalized }}"
+                - action: tts.speak
+                  target:
+                    entity_id: !input tts_engine_entity
+                  data:
+                    media_player_entity_id: "{{ speakers }}"
+                    message: "{{ temperature_tts_message }}"
+                    cache: true
+                - delay:
+                    seconds: !input tts_volume_restore_delay
+                - alias: Restore the previous volume on each speaker
+                  repeat:
+                    for_each: "{{ range(speakers | count) | list }}"
                     sequence:
-                      - variables:
-                          current_speaker: "{{ repeat.item }}"
-                          previous_volume_level: "{{ state_attr(current_speaker, 'volume_level') }}"
-                      - action: media_player.volume_set
-                        target:
-                          entity_id: "{{ current_speaker }}"
-                        data:
-                          volume_level: "{{ tts_volume_level_normalized }}"
-                      - action: tts.speak
-                        target:
-                          entity_id: !input tts_engine_entity
-                        data:
-                          media_player_entity_id: "{{ current_speaker }}"
-                          message: "{{ temperature_tts_message }}"
-                          cache: true
-                      - delay:
-                          seconds: !input tts_volume_restore_delay
-                      - choose:
-                          - conditions: "{{ previous_volume_level != none }}"
-                            sequence:
-                              - action: media_player.volume_set
-                                target:
-                                  entity_id: "{{ current_speaker }}"
-                                data:
-                                  volume_level: "{{ previous_volume_level }}"
+                      - if: "{{ previous_volumes[repeat.item] is number }}"
+                        then:
+                          - action: media_player.volume_set
+                            target:
+                              entity_id: "{{ speakers[repeat.item] }}"
+                            data:
+                              volume_level: "{{ previous_volumes[repeat.item] }}"
                 - delay:
                     seconds: !input tts_repeat_interval
           - variables:
