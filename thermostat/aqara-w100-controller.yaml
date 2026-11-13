@@ -21,6 +21,9 @@ blueprint:
       - Triggers are queued instead of restarting the run in progress, so
         plus/minus presses reliably show the new setpoint on the W100 and
         start the feedback timer.
+      - Commands are only sent when something needs to change: the room
+        setpoint goes only to climate entities not already at it, and the
+        W100 mode and display settings are only sent when they differ.
 
     - 1.0.0: Initial release with external temperature/humidity display sync
       and plus/minus setpoint control. Center press restores the external
@@ -309,18 +312,31 @@ actions:
       - condition: template
         value_template: "{{ room_setpoint_available }}"
     then:
-      - alias: Sync room setpoint to target climate entities
-        action: climate.set_temperature
-        target:
-          entity_id: !input target_climate_entities
-        data:
-          temperature: "{{ room_setpoint_value }}"
-      - alias: Log room setpoint sync
-        action: logbook.log
-        data:
-          name: Aqara W100
-          message: "Synced target climate entities to {{ room_setpoint_value }}°C"
-          entity_id: !input room_setpoint_entity
+      - variables:
+          climates_to_sync: >-
+            {%- set ns = namespace(entities=[]) -%}
+            {%- for climate in target_climate_entities
+                if state_attr(climate, 'temperature') | float(-999) != room_setpoint_value | float -%}
+              {%- set ns.entities = ns.entities + [climate] -%}
+            {%- endfor -%}
+            {{ ns.entities }}
+      - alias: Only send to climate entities that are not at the setpoint yet
+        if:
+          - condition: template
+            value_template: "{{ climates_to_sync | count > 0 }}"
+        then:
+          - alias: Sync room setpoint to target climate entities
+            action: climate.set_temperature
+            target:
+              entity_id: "{{ climates_to_sync }}"
+            data:
+              temperature: "{{ room_setpoint_value }}"
+          - alias: Log room setpoint sync
+            action: logbook.log
+            data:
+              name: Aqara W100
+              message: "Synced {{ climates_to_sync | join(', ') }} to {{ room_setpoint_value }}°C"
+              entity_id: !input room_setpoint_entity
 
   - if:
       - condition: trigger
@@ -336,15 +352,23 @@ actions:
         value_template: "{{ w100_sensor_select_entity | trim != '' }}"
     then:
       - alias: Keep W100 in normal mode with external sensor display
-        action: switch.turn_off
-        target:
-          entity_id: "{{ w100_thermostat_mode_entity }}"
+        if:
+          - condition: template
+            value_template: "{{ not is_state(w100_thermostat_mode_entity | trim, 'off') }}"
+        then:
+          - action: switch.turn_off
+            target:
+              entity_id: "{{ w100_thermostat_mode_entity }}"
       - alias: Select external sensor display on W100
-        action: select.select_option
-        target:
-          entity_id: "{{ w100_sensor_select_entity }}"
-        data:
-          option: external
+        if:
+          - condition: template
+            value_template: "{{ not is_state(w100_sensor_select_entity | trim, 'external') }}"
+        then:
+          - action: select.select_option
+            target:
+              entity_id: "{{ w100_sensor_select_entity }}"
+            data:
+              option: external
 
   - if:
       - condition: trigger
