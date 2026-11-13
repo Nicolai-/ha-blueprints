@@ -1,14 +1,32 @@
 blueprint:
   name: Zigbee2MQTT OTA Update
   description: >
-    Automatically checks for and installs Zigbee2MQTT OTA updates for supported entities.
+    Checks for and installs Zigbee2MQTT OTA updates one device at a time.
+    Run it manually or from another automation.
 
     - Filters by MQTT integration
+
     - Supports selecting domains (e.g., light, sensor)
+
     - Allows excluding devices (entire devices, not individual entities)
 
-    Version 1.2.0 – Optimized and switched to device-based exclusion
+
+    **Version:** 1.3.0
+
+
+    **Changelog:**
+
+    - 1.3.0:
+      - Uses the triggers/conditions/actions syntax and requires Home
+        Assistant 2024.10.0 or newer.
+
+    - 1.2.0: Optimized and switched to device-based exclusion.
+
+    - 1.0.0: Initial release.
   domain: automation
+  author: Nicolai-
+  homeassistant:
+    min_version: '2024.10.0'
   input:
     included_domains:
       name: Included Domains
@@ -43,22 +61,17 @@ blueprint:
               - climate
               - lock
           multiple: true
-trigger: []
+  source_url: https://github.com/Nicolai-/ha-blueprints/blob/main/ota_updates/zigbee2mqtt-ota-updates.yaml
 
-condition: []
+triggers: []
 
-action:
+conditions: []
+
+actions:
   - alias: Define variables
     variables:
-      included_domains: !input "included_domains"
-      exclude_devices: !input "exclude_devices"
-
-      # Get all update entities linked to excluded devices
-      excluded_update_entities: >
-        {{ exclude_devices
-          | map('device_entities')
-          | map('select', 'match', '^update\\.')
-          | map('list') | sum(start=[]) }}
+      included_domains: !input included_domains
+      exclude_devices: !input exclude_devices
 
       # All MQTT update entities that are ON (need updates)
       mqtt_update_entities: >
@@ -94,7 +107,7 @@ action:
         - variables:
             triggered_entity: "{{ repeat.item }}"
 
-        - service: logbook.log
+        - action: logbook.log
           data:
             name: Zigbee2MQTT OTA Update
             message: "Processing OTA update for {{ triggered_entity }}"
@@ -108,28 +121,28 @@ action:
                 - action: logbook.log
                   data:
                     name: Zigbee2MQTT OTA Update
-                    message: "Starting OTA update"
+                    message: Starting OTA update
                     entity_id: "{{ triggered_entity }}"
 
                 - action: update.install
                   target:
                     entity_id: "{{ triggered_entity }}"
 
-                - wait_template: "{{ is_state_attr(triggered_entity, 'in_progress', true) }}"
-                  timeout: "00:02:00"
+                - alias: Wait for the update to start
+                  wait_template: "{{ is_state_attr(triggered_entity, 'in_progress', true) }}"
+                  timeout: '00:02:00'
                   continue_on_timeout: true
-                  alias: Wait for the update to start
 
                 - action: logbook.log
                   data:
                     name: Zigbee2MQTT OTA Update
-                    message: "Waiting for OTA update to complete"
+                    message: Waiting for OTA update to complete
                     entity_id: "{{ triggered_entity }}"
 
-                - wait_template: "{{ is_state_attr(triggered_entity, 'in_progress', false) }}"
-                  timeout: "02:00:00"
+                - alias: Wait for the update to complete
+                  wait_template: "{{ is_state_attr(triggered_entity, 'in_progress', false) }}"
+                  timeout: '02:00:00'
                   continue_on_timeout: true
-                  alias: Wait for the update to complete
 
           default:
             - action: logbook.log
