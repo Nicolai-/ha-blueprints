@@ -3,11 +3,14 @@ blueprint:
   description: >
     Monitor a fridge door sensor and temperature sensor.
 
+
     Sends repeated TTS alerts while the fridge door remains open, sends
     configurable notification actions when the door has been open too long,
     and alerts when the temperature remains above the configured threshold.
 
+
     **Version:** 1.4.0
+
 
     **Changelog:**
 
@@ -16,6 +19,7 @@ blueprint:
         longer stops an active temperature alert (or the other way round),
         recovery notifications are no longer lost, and speakers are no
         longer left at the alert volume.
+      - Description paragraphs render as separate paragraphs in the UI.
 
     - 1.3.0: Added support for multiple TTS speakers
 
