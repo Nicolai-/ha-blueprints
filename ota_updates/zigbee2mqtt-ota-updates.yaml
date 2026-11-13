@@ -19,6 +19,13 @@ blueprint:
     - 1.3.0:
       - Uses the triggers/conditions/actions syntax and requires Home
         Assistant 2024.10.0 or newer.
+      - Several domains can be selected, and domains are matched exactly.
+        Selecting binary_sensor no longer also includes devices that only
+        have a sensor entity.
+      - The logbook shows how each update ended: installed, stopped before
+        it was installed, not started within 2 minutes, or not finished
+        within 2 hours. Before, an update that never started was logged
+        like a normal one.
 
     - 1.2.0: Optimized and switched to device-based exclusion.
 
@@ -30,10 +37,13 @@ blueprint:
   input:
     included_domains:
       name: Included Domains
-      description: Choose which entity domains should be included for OTA updates.
+      description: >
+        Devices with at least one entity in these domains are included for OTA
+        updates.
       selector:
         select:
           mode: list
+          multiple: true
           options:
             - light
             - sensor
@@ -70,7 +80,11 @@ conditions: []
 actions:
   - alias: Define variables
     variables:
-      included_domains: !input included_domains
+      included_domains_input: !input included_domains
+      # Automations created before 1.3.0 store a single domain as a string
+      included_domains: >
+        {{ [included_domains_input] if included_domains_input is string
+           else included_domains_input | list }}
       exclude_devices: !input exclude_devices
 
       # All MQTT update entities that are ON (need updates)
@@ -133,16 +147,41 @@ actions:
                   timeout: '00:02:00'
                   continue_on_timeout: true
 
-                - action: logbook.log
-                  data:
-                    name: Zigbee2MQTT OTA Update
-                    message: Waiting for OTA update to complete
-                    entity_id: "{{ triggered_entity }}"
+                - alias: Only wait for the result if the update started
+                  if:
+                    - condition: template
+                      value_template: "{{ wait.completed }}"
+                  then:
+                    - action: logbook.log
+                      data:
+                        name: Zigbee2MQTT OTA Update
+                        message: Waiting for OTA update to complete
+                        entity_id: "{{ triggered_entity }}"
 
-                - alias: Wait for the update to complete
-                  wait_template: "{{ is_state_attr(triggered_entity, 'in_progress', false) }}"
-                  timeout: '02:00:00'
-                  continue_on_timeout: true
+                    - alias: Wait for the update to complete
+                      wait_template: "{{ is_state_attr(triggered_entity, 'in_progress', false) }}"
+                      timeout: '02:00:00'
+                      continue_on_timeout: true
+
+                    - alias: Log how the update ended
+                      action: logbook.log
+                      data:
+                        name: Zigbee2MQTT OTA Update
+                        message: >-
+                          {% if not wait.completed %}
+                            OTA update did not finish within 2 hours, moving on
+                          {% elif is_state(triggered_entity, 'on') %}
+                            OTA update stopped before it was installed
+                          {% else %}
+                            OTA update installed
+                          {% endif %}
+                        entity_id: "{{ triggered_entity }}"
+                  else:
+                    - action: logbook.log
+                      data:
+                        name: Zigbee2MQTT OTA Update
+                        message: OTA update did not start within 2 minutes, moving on
+                        entity_id: "{{ triggered_entity }}"
 
           default:
             - action: logbook.log
