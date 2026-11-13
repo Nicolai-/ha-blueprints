@@ -25,6 +25,7 @@ blueprint:
         the threshold plus the hysteresis, so they no longer switch on and
         off when the lamp itself lights up the sensor.
       - The lux sensor can no longer be left empty.
+      - The lux threshold can be set up to 1000 lx (was 100 lx).
 
     - 1.0.1: Fixed a type issue and re-check the lux level every 10 minutes.
 
@@ -55,7 +56,7 @@ blueprint:
       selector:
         number:
           min: 0.0
-          max: 100.0
+          max: 1000.0
           mode: box
           unit_of_measurement: lx
           step: 1.0
