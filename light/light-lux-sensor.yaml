@@ -1,18 +1,33 @@
 blueprint:
   name: Light Lux Sensor
-  description:
-    "This blueprint will turn on/off selected light based on a lux level
+  description: >
+    This blueprint will turn on/off selected light based on a lux level
     threshold and delay.
 
-    Version 1.1.0
 
-    "
+    **Version:** 1.1.0
+
+
+    **Changelog:**
+
+    - 1.1.0:
+      - Description uses a block scalar so Markdown renders in the UI.
+      - Consistent 2-space indentation.
+      - Uses the actions syntax and requires Home Assistant 2024.10.0 or newer.
+      - Clearer description of the lux sensor input.
+      - No "Already running" warnings in the log when triggers overlap.
+
+    - 1.0.1: Fixed a type issue and re-check the lux level every 10 minutes.
+
+    - 1.0.0: Initial release.
   domain: automation
   author: Nicolai-
+  homeassistant:
+    min_version: '2024.10.0'
   input:
     lux_sensor_entity:
       name: (Required) Lux Sensor Entity
-      description: The action sensor of the controller to use for the automation.
+      description: Illuminance sensor that measures the light level the lights react to.
       default: ""
       selector:
         entity:
@@ -112,9 +127,9 @@ triggers:
     minutes: !input delay_minutes
 - trigger: time_pattern
   minutes: /10
-action:
+actions:
 - variables:
-      current_lux_level: "{{ states(lux_sensor_entity) | float(0) }}"
+    current_lux_level: "{{ states(lux_sensor_entity) | float(0) }}"
 - choose:
   - alias: Turn on when below threshold
         conditions: "{{ current_lux_level < lux_threshold_level | float }}"
@@ -132,5 +147,6 @@ action:
     target:
       entity_id: !input light
     data:
-        transition: "{{ light_transition / 1000 }}"
+      transition: "{{ light_transition / 1000 }}"
 mode: single
+max_exceeded: silent
