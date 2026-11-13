@@ -25,6 +25,10 @@ blueprint:
         setpoint goes only to climate entities not already at it, and the
         W100 mode and display settings are only sent when they differ.
       - A minimum setpoint above the maximum is handled by swapping them.
+      - On a sensor update, the external temperature and humidity are only
+        written to the W100 when the value it shows (one decimal, whole
+        percent) changes, and a temperature update no longer also writes
+        the humidity. Both are still refreshed every 30 minutes.
 
     - 1.0.0: Initial release with external temperature/humidity display sync
       and plus/minus setpoint control. Center press restores the external
@@ -388,6 +392,15 @@ actions:
         value_template: "{{ external_temperature_available }}"
       - condition: template
         value_template: "{{ w100_external_temperature_entity | trim != '' }}"
+      # Compared with the sensor's previous value, not with the W100 entity:
+      # Zigbee2MQTT does not report the written value back on that entity.
+      - alias: On a sensor update, only when the value shown on the W100 (one decimal) changes
+        condition: template
+        value_template: >-
+          {{ trigger.id != 'external_temperature'
+             or trigger.from_state is none
+             or not trigger.from_state.state | is_number
+             or trigger.from_state.state | float | round(1) != external_temperature_value | float }}
     then:
       - alias: Set external temperature on W100
         action: number.set_value
@@ -410,11 +423,17 @@ actions:
         id:
           - startup
           - backup
-          - external_temperature
           - external_humidity
           - feedback_timer_finished
       - condition: template
         value_template: "{{ external_humidity_available and w100_external_humidity_entity | trim != '' }}"
+      - alias: On a sensor update, only when the value shown on the W100 (whole percent) changes
+        condition: template
+        value_template: >-
+          {{ trigger.id != 'external_humidity'
+             or trigger.from_state is none
+             or not trigger.from_state.state | is_number
+             or trigger.from_state.state | float | round(0) != external_humidity_value | float | round(0) }}
     then:
       - alias: Set external humidity on W100
         action: number.set_value
