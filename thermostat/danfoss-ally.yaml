@@ -6,10 +6,14 @@ blueprint:
     for multiple TRVs in the same room.
 
 
-    **Version:** 1.1.3
+    **Version:** 1.2.0
 
 
     **Changelog:**
+
+    - 1.2.0:
+      - Removed a disabled conditions block and added descriptions to all
+        inputs.
 
     - 1.1.3: Publish the first Ally local_temperature when the room sensor is unavailable and that reading has moved by at least 0.1°C
 
@@ -37,6 +41,10 @@ blueprint:
           multiple: true
     temperature_sensor_entity:
       name: Temperature Sensor Entity
+      description: >
+        Room temperature sensor sent to the TRVs as the external measured room
+        temperature. While it is unavailable, the first TRV's own temperature
+        is used instead.
       selector:
         entity:
           multiple: false
@@ -45,6 +53,10 @@ blueprint:
             device_class: temperature
     earliest_update_time:
       name: Earliest Next Update Time
+      description: >
+        Date and time helper (input_datetime) that stores when the room
+        temperature must be sent again even if it has not changed. The
+        automation sets it 30 minutes ahead after every update.
       selector:
         entity:
           multiple: false
@@ -70,7 +82,7 @@ blueprint:
 
         - **3-4**: Fast (~15 min) - Responsive, good for well-insulated rooms
 
-        - **5-6**: Moderate (~30 min) - Balanced response (recommended)
+        - **5-6**: Moderate (~30 min) - Balanced response
 
         - **7-8**: Slow (~50 min) - Smooth, reduces overshoot
 
@@ -149,17 +161,6 @@ variables:
   window_sensor_entities: !input window_sensor_entities
   earliest_update_time: !input earliest_update_time
   external_measured_room_sensor_read_entity: '{{ danfoss_ally_external_measured_room_sensor_entities | first }}'
-conditions:
-  - condition: or
-    enabled: false
-    conditions:
-      - condition: trigger
-        id:
-          - time
-      - condition: template
-        value_template: '{{ is_number(effective_temperature_hundredths) and is_number(states(external_measured_room_sensor_read_entity)) and ((states(external_measured_room_sensor_read_entity) | int(0) - (effective_temperature_hundredths | int(0))) | abs >= 10) }}'
-      - condition: template
-        value_template: '{{ now() > states(earliest_update_time) | as_datetime | as_local }}'
 actions:
   - choose:
       - alias: Room load balancing (every 15 min) - Multiple TRVs
