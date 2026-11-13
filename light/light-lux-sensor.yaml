@@ -24,6 +24,7 @@ blueprint:
       - New "Lux hysteresis" input (default 10 lx). Lights turn off above
         the threshold plus the hysteresis, so they no longer switch on and
         off when the lamp itself lights up the sensor.
+      - The lux sensor can no longer be left empty.
 
     - 1.0.1: Fixed a type issue and re-check the lux level every 10 minutes.
 
@@ -36,7 +37,6 @@ blueprint:
     lux_sensor_entity:
       name: (Required) Lux Sensor Entity
       description: Illuminance sensor that measures the light level the lights react to.
-      default: ""
       selector:
         entity:
           filter:
