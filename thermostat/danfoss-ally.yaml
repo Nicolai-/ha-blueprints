@@ -14,6 +14,8 @@ blueprint:
     - 1.2.0:
       - Removed a disabled conditions block and added descriptions to all
         inputs.
+      - The TRV window switches are only sent when they need to change, not
+        on every temperature update.
 
     - 1.1.3: Publish the first Ally local_temperature when the room sensor is unavailable and that reading has moved by at least 0.1°C
 
@@ -237,17 +239,28 @@ actions:
               entity_id: !input earliest_update_time
             data:
               datetime: '{{ (now() + timedelta(minutes=30)).strftime(''%Y-%m-%d %H:%M:%S'') }}'
+      - variables:
+          window_open: "{{ window_sensor_entities | select('is_state', 'on') | list | length > 0 }}"
+          # Only the TRV window switches that are not in the wanted state yet
+          window_switches_to_change: >-
+            {{ danfoss_ally_window_open_external_entities
+               | reject('is_state', 'on' if window_open else 'off')
+               | list }}
       - choose:
           - alias: If any window sensor is open
-            conditions: '{{ window_sensor_entities | select(''is_state'', ''on'') | list | length > 0 }}'
+            conditions:
+              - "{{ window_open }}"
+              - "{{ window_switches_to_change | count > 0 }}"
             sequence:
               - action: switch.turn_on
                 target:
-                  entity_id: '{{ danfoss_ally_window_open_external_entities }}'
+                  entity_id: '{{ window_switches_to_change }}'
           - alias: If all window sensors are closed
-            conditions: '{{ window_sensor_entities | select(''is_state'', ''on'') | list | length == 0 }}'
+            conditions:
+              - "{{ not window_open }}"
+              - "{{ window_switches_to_change | count > 0 }}"
             sequence:
               - action: switch.turn_off
                 target:
-                  entity_id: '{{ danfoss_ally_window_open_external_entities }}'
+                  entity_id: '{{ window_switches_to_change }}'
 mode: single
