@@ -18,6 +18,9 @@ blueprint:
       - No "Already running" warnings in the log when triggers overlap.
       - Fixed a YAML error that stopped the blueprint from loading.
       - An unavailable or unknown lux sensor no longer turns the light on.
+      - The 10 minute re-check is replaced by a check at Home Assistant
+        start. The light is only switched when its state needs to change,
+        so manual changes are kept and the delay is always respected.
 
     - 1.0.1: Fixed a type issue and re-check the lux level every 10 minutes.
 
@@ -127,8 +130,8 @@ triggers:
   below: !input lux_threshold_level
   for:
     minutes: !input delay_minutes
-- trigger: time_pattern
-  minutes: /10
+- trigger: homeassistant
+  event: start
 actions:
 - alias: Stop when the lux sensor has no numeric value
   condition: template
@@ -136,8 +139,10 @@ actions:
 - variables:
     current_lux_level: "{{ states(lux_sensor_entity) | float(0) }}"
 - choose:
-  - alias: Turn on when below threshold
-    conditions: "{{ current_lux_level < lux_threshold_level | float }}"
+  - alias: Turn on when below threshold and the light is off
+    conditions:
+    - "{{ current_lux_level < lux_threshold_level | float }}"
+    - "{{ is_state(light, 'off') }}"
     sequence:
     - action: light.turn_on
       target:
@@ -146,12 +151,15 @@ actions:
         brightness_pct: "{{ on_brightness }}"
         color_temp_kelvin: "{{ on_color_temperature }}"
         transition: "{{ light_transition / 1000 }}"
-  default:
-  - alias: Turn off when above threshold
-    action: light.turn_off
-    target:
-      entity_id: !input light
-    data:
-      transition: "{{ light_transition / 1000 }}"
+  - alias: Turn off when above threshold and the light is on
+    conditions:
+    - "{{ current_lux_level >= lux_threshold_level | float }}"
+    - "{{ is_state(light, 'on') }}"
+    sequence:
+    - action: light.turn_off
+      target:
+        entity_id: !input light
+      data:
+        transition: "{{ light_transition / 1000 }}"
 mode: single
 max_exceeded: silent
