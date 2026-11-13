@@ -24,6 +24,14 @@ blueprint:
       - Announcements stop and the recovery notification is sent as soon as
         the door closes or the temperature is back, instead of after the
         repeat interval.
+      - An unavailable sensor no longer counts as recovered. Announcements
+        pause until the sensor reports again. Back to normal sends the
+        recovery notification. Still open or too warm starts the alert
+        over after its delay, without a second alert running alongside.
+      - While the door alert is announcing, the temperature announcement
+        waits (its notifications are still sent). The two no longer talk
+        over each other, and overlapping announcements no longer leave the
+        speakers at the alert volume.
 
     - 1.3.0: Added support for multiple TTS speakers
 
@@ -227,6 +235,7 @@ variables:
   speaker_entity: !input speaker_entity
   # Automations created before 1.3.0 store a single speaker as a string
   speakers: "{{ [speaker_entity] if speaker_entity is string else speaker_entity | list }}"
+  door_tts_delay: !input door_tts_delay
   door_tts_message: !input door_tts_message
   temperature_tts_message: !input temperature_tts_message
   door_recovery_message: !input door_recovery_message
@@ -258,10 +267,23 @@ actions:
           - choose:
               - conditions: "{{ notification_actions_configured }}"
                 sequence: !input notification_actions
-          - alias: Wait for the door to close (the door TTS run keeps announcing)
-            wait_template: "{{ is_state(door_sensor_entity, 'off') }}"
+          - alias: Wait until the door is no longer open (the door TTS run keeps announcing)
+            wait_template: "{{ not is_state(door_sensor_entity, 'on') }}"
             timeout:
               hours: 24
+            continue_on_timeout: false
+          # A sensor that drops out and comes back still open re-arms the
+          # trigger, which starts a new run after the delay. This run then
+          # hands over instead of running alongside it.
+          - alias: If the sensor dropped out, wait for it to report again
+            wait_template: "{{ states(door_sensor_entity) in ['on', 'off'] }}"
+            timeout:
+              hours: 24
+            continue_on_timeout: false
+          - alias: If the door is still open, stop when the new run takes over, unless it closes first
+            wait_template: "{{ is_state(door_sensor_entity, 'off') }}"
+            timeout:
+              minutes: !input door_notification_delay
             continue_on_timeout: false
           - variables:
               alert_title: 'Fridge Door Recovered'
@@ -286,6 +308,7 @@ actions:
               alert_message: 'The fridge door is open.'
               alert_cause: 'door'
               alert_entity: "{{ door_sensor_entity }}"
+              tts_message: "{{ door_tts_message }}"
           - action: logbook.log
             data:
               name: 'Fridge Monitor'
@@ -297,40 +320,56 @@ actions:
                   entity_id: !input door_sensor_entity
                   state: 'on'
               sequence:
-                - variables:
-                    previous_volumes: >-
-                      {%- set ns = namespace(volumes=[]) -%}
-                      {%- for speaker in speakers -%}
-                        {%- set ns.volumes = ns.volumes + [state_attr(speaker, 'volume_level')] -%}
-                      {%- endfor -%}
-                      {{ ns.volumes }}
-                - action: media_player.volume_set
-                  target:
-                    entity_id: "{{ speakers }}"
-                  data:
-                    volume_level: "{{ tts_volume_level_normalized }}"
-                - action: tts.speak
-                  target:
-                    entity_id: !input tts_engine_entity
-                  data:
-                    media_player_entity_id: "{{ speakers }}"
-                    message: "{{ door_tts_message }}"
-                    cache: true
-                - delay:
-                    seconds: !input tts_volume_restore_delay
-                - alias: Restore the previous volume on each speaker
-                  repeat:
-                    for_each: "{{ range(speakers | count) | list }}"
-                    sequence:
-                      - if: "{{ previous_volumes[repeat.item] is number }}"
-                        then:
-                          - action: media_player.volume_set
-                            target:
-                              entity_id: "{{ speakers[repeat.item] }}"
-                            data:
-                              volume_level: "{{ previous_volumes[repeat.item] }}"
-                - alias: Wait for the next announcement, or stop as soon as the door closes
-                  wait_template: "{{ is_state(door_sensor_entity, 'off') }}"
+                # The temperature alert reuses these steps through the YAML
+                # anchor (*announce_steps). They speak tts_message.
+                - alias: Announce on all speakers, then restore their volume
+                  sequence: &announce_steps
+                    - variables:
+                        previous_volumes: >-
+                          {%- set ns = namespace(volumes=[]) -%}
+                          {%- for speaker in speakers -%}
+                            {%- set volume = state_attr(speaker, 'volume_level') -%}
+                            {#- A speaker already at the alert volume is in use by another
+                                announcement, which restores it. Saving that volume here
+                                would leave the speaker at the alert volume. -#}
+                            {%- set restore = volume is number
+                                and (volume - tts_volume_level_normalized) | abs > 0.02 -%}
+                            {%- set ns.volumes = ns.volumes + [volume if restore else none] -%}
+                          {%- endfor -%}
+                          {{ ns.volumes }}
+                    - action: media_player.volume_set
+                      target:
+                        entity_id: "{{ speakers }}"
+                      data:
+                        volume_level: "{{ tts_volume_level_normalized }}"
+                    - action: tts.speak
+                      target:
+                        entity_id: !input tts_engine_entity
+                      data:
+                        media_player_entity_id: "{{ speakers }}"
+                        message: "{{ tts_message }}"
+                        cache: true
+                    - alias: Keep the alert volume while the message plays, or until the alert ends
+                      wait_template: >-
+                        {{ not is_state(door_sensor_entity, 'on') if alert_cause == 'door'
+                           else not (states(temperature_sensor_entity) | is_number
+                                     and states(temperature_sensor_entity) | float > temperature_threshold | float) }}
+                      timeout:
+                        seconds: !input tts_volume_restore_delay
+                      continue_on_timeout: true
+                    - alias: Restore the previous volume on each speaker
+                      repeat:
+                        for_each: "{{ range(speakers | count) | list }}"
+                        sequence:
+                          - if: "{{ previous_volumes[repeat.item] is number }}"
+                            then:
+                              - action: media_player.volume_set
+                                target:
+                                  entity_id: "{{ speakers[repeat.item] }}"
+                                data:
+                                  volume_level: "{{ previous_volumes[repeat.item] }}"
+                - alias: Wait for the next announcement, or stop as soon as the door is no longer open
+                  wait_template: "{{ not is_state(door_sensor_entity, 'on') }}"
                   timeout:
                     seconds: !input tts_repeat_interval
                   continue_on_timeout: true
@@ -344,6 +383,7 @@ actions:
               alert_message: "Temperature alert: The fridge temperature has stayed above {{ temperature_threshold }}°C."
               alert_cause: 'temperature'
               alert_entity: "{{ temperature_sensor_entity }}"
+              tts_message: "{{ temperature_tts_message }}"
           - action: logbook.log
             data:
               name: 'Fridge Monitor'
@@ -354,49 +394,43 @@ actions:
                 sequence: !input notification_actions
           - repeat:
               while:
-                - condition: numeric_state
-                  entity_id: !input temperature_sensor_entity
-                  above: !input temperature_threshold
-              sequence:
-                - variables:
-                    previous_volumes: >-
-                      {%- set ns = namespace(volumes=[]) -%}
-                      {%- for speaker in speakers -%}
-                        {%- set ns.volumes = ns.volumes + [state_attr(speaker, 'volume_level')] -%}
-                      {%- endfor -%}
-                      {{ ns.volumes }}
-                - action: media_player.volume_set
-                  target:
-                    entity_id: "{{ speakers }}"
-                  data:
-                    volume_level: "{{ tts_volume_level_normalized }}"
-                - action: tts.speak
-                  target:
-                    entity_id: !input tts_engine_entity
-                  data:
-                    media_player_entity_id: "{{ speakers }}"
-                    message: "{{ temperature_tts_message }}"
-                    cache: true
-                - delay:
-                    seconds: !input tts_volume_restore_delay
-                - alias: Restore the previous volume on each speaker
-                  repeat:
-                    for_each: "{{ range(speakers | count) | list }}"
-                    sequence:
-                      - if: "{{ previous_volumes[repeat.item] is number }}"
-                        then:
-                          - action: media_player.volume_set
-                            target:
-                              entity_id: "{{ speakers[repeat.item] }}"
-                            data:
-                              volume_level: "{{ previous_volumes[repeat.item] }}"
-                - alias: Wait for the next announcement, or stop as soon as the temperature is back
-                  wait_template: >-
+                - alias: The sensor reports a value and it is still too warm
+                  condition: template
+                  value_template: >-
                     {{ states(temperature_sensor_entity) | is_number
-                       and states(temperature_sensor_entity) | float <= temperature_threshold | float }}
+                       and states(temperature_sensor_entity) | float > temperature_threshold | float }}
+              sequence:
+                - alias: Announce, unless the door alert is announcing (it goes first)
+                  if:
+                    - alias: The door has not been open long enough for the door TTS alert
+                      condition: template
+                      value_template: >-
+                        {{ not (is_state(door_sensor_entity, 'on')
+                                and (now() - states[door_sensor_entity].last_changed).total_seconds()
+                                    >= door_tts_delay | float * 60) }}
+                  then: *announce_steps
+                - alias: Wait for the next announcement, or stop as soon as the temperature is back or the sensor drops out
+                  wait_template: >-
+                    {{ not (states(temperature_sensor_entity) | is_number
+                            and states(temperature_sensor_entity) | float > temperature_threshold | float) }}
                   timeout:
                     seconds: !input tts_repeat_interval
                   continue_on_timeout: true
+          # A sensor that drops out and comes back still too warm re-arms the
+          # trigger, which starts a new run after the temperature duration.
+          # This run then hands over instead of running alongside it.
+          - alias: If the sensor dropped out, wait for it to report again
+            wait_template: "{{ states(temperature_sensor_entity) | is_number }}"
+            timeout:
+              hours: 24
+            continue_on_timeout: false
+          - alias: If it is still too warm, stop when the new run takes over, unless it recovers first
+            wait_template: >-
+              {{ states(temperature_sensor_entity) | is_number
+                 and states(temperature_sensor_entity) | float <= temperature_threshold | float }}
+            timeout:
+              minutes: !input temperature_duration
+            continue_on_timeout: false
           - variables:
               alert_title: 'Fridge Temperature Recovered'
               alert_message: "Temperature recovered: {{ temperature_recovery_message }}"
