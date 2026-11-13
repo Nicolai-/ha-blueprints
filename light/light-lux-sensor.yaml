@@ -21,6 +21,9 @@ blueprint:
       - The 10 minute re-check is replaced by a check at Home Assistant
         start. The light is only switched when its state needs to change,
         so manual changes are kept and the delay is always respected.
+      - New "Lux hysteresis" input (default 10 lx). Lights turn off above
+        the threshold plus the hysteresis, so they no longer switch on and
+        off when the lamp itself lights up the sensor.
 
     - 1.0.1: Fixed a type issue and re-check the lux level every 10 minutes.
 
@@ -45,12 +48,29 @@ blueprint:
           reorder: false
     lux_threshold_level:
       name: (Required) Lux level threshold
-      description: Turn on lights when below and turn off lights when above.
+      description: >
+        Turn on lights when the lux level is below this value. They turn off
+        again when it is above this value plus the hysteresis.
       default: 50.0
       selector:
         number:
           min: 0.0
           max: 100.0
+          mode: box
+          unit_of_measurement: lx
+          step: 1.0
+    lux_hysteresis:
+      name: Lux hysteresis
+      description: >
+        Extra lux above the threshold before lights turn off. Set it higher
+        than the light the lamp itself adds to the sensor, so turning the
+        light on does not push the reading over the off level and make the
+        light switch on and off. 0 uses the same level for on and off.
+      default: 10
+      selector:
+        number:
+          min: 0.0
+          max: 500.0
           mode: box
           unit_of_measurement: lx
           step: 1.0
@@ -112,17 +132,22 @@ blueprint:
           unit_of_measurement: milliseconds
           mode: box
   source_url: https://github.com/Nicolai-/ha-blueprints/blob/main/light/light-lux-sensor.yaml
-variables:
+trigger_variables:
   lux_sensor_entity: !input lux_sensor_entity
+  lux_threshold_level: !input lux_threshold_level
+  lux_hysteresis: !input lux_hysteresis
+variables:
   light: !input light
   on_brightness: !input on_brightness
   on_color_temperature: !input on_color_temperature
   light_transition: !input light_transition
-  lux_threshold_level: !input lux_threshold_level
 triggers:
-- trigger: numeric_state
-  entity_id: !input lux_sensor_entity
-  above: !input lux_threshold_level
+- alias: Lux level above the threshold plus hysteresis
+  trigger: template
+  value_template: >-
+    {{ states(lux_sensor_entity) | is_number
+       and states(lux_sensor_entity) | float
+         > lux_threshold_level | float + lux_hysteresis | float }}
   for:
     minutes: !input delay_minutes
 - trigger: numeric_state
@@ -151,9 +176,9 @@ actions:
         brightness_pct: "{{ on_brightness }}"
         color_temp_kelvin: "{{ on_color_temperature }}"
         transition: "{{ light_transition / 1000 }}"
-  - alias: Turn off when above threshold and the light is on
+  - alias: Turn off when above threshold plus hysteresis and the light is on
     conditions:
-    - "{{ current_lux_level >= lux_threshold_level | float }}"
+    - "{{ current_lux_level > lux_threshold_level | float + lux_hysteresis | float }}"
     - "{{ is_state(light, 'on') }}"
     sequence:
     - action: light.turn_off
